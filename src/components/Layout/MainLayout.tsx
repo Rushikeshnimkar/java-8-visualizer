@@ -10,21 +10,26 @@ import { JVMStack } from '../Visualizations/JVMStack'
 import { HeapView } from '../Visualizations/HeapView'
 import { MethodArea } from '../Visualizations/MethodArea'
 import { ProgramCounter } from '../Visualizations/ProgramCounter'
-import { OutputConsole } from '../Visualizations/OutputConsole'
+import { OutputConsole, DataStructuresView } from '../Visualizations'
 import { VariableHistory, AllVariablesPanel } from '../Visualizations/VariableHistory'
 import { useExecutionStore } from '../../state/executionStore'
 
-type VisualizationTab = 'stack' | 'heap' | 'variables' | 'history'
+type VisualizationTab = 'data-structures' | 'stack' | 'heap' | 'variables' | 'history'
 type BottomTab = 'output' | 'method-area' | 'pc'
 
 export function MainLayout() {
   const [leftPanelWidth, setLeftPanelWidth] = useState(40)
   const [bottomPanelHeight, setBottomPanelHeight] = useState(250)
-  const [activeTab, setActiveTab] = useState<VisualizationTab>('stack')
+  const [activeTab, setActiveTab] = useState<VisualizationTab>('data-structures')
   const [bottomTab, setBottomTab] = useState<BottomTab>('output')
   const { compilationError, jvmState } = useExecutionStore()
 
   const tabs: { id: VisualizationTab; label: string; icon: JSX.Element; badge?: number }[] = [
+    {
+      id: 'data-structures',
+      label: 'Data Structures',
+      icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" /></svg>,
+    },
     {
       id: 'stack',
       label: 'Stack',
@@ -147,8 +152,8 @@ export function MainLayout() {
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 ${activeTab === tab.id
-                      ? 'text-dark-accent border-dark-accent bg-dark-accent/5'
-                      : 'text-dark-muted border-transparent hover:text-dark-text hover:bg-dark-border/30'
+                    ? 'text-dark-accent border-dark-accent bg-dark-accent/5'
+                    : 'text-dark-muted border-transparent hover:text-dark-text hover:bg-dark-border/30'
                     }`}
                 >
                   {tab.icon}
@@ -167,6 +172,17 @@ export function MainLayout() {
           {/* Main Visualization Area */}
           <div className="flex-1 overflow-hidden p-4">
             <AnimatePresence mode="wait">
+              {activeTab === 'data-structures' && (
+                <motion.div
+                  key="data-structures"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  className="h-full"
+                >
+                  <DataStructuresView />
+                </motion.div>
+              )}
               {activeTab === 'stack' && (
                 <motion.div
                   key="stack"
@@ -248,8 +264,8 @@ export function MainLayout() {
                   key={tab.id}
                   onClick={() => setBottomTab(tab.id)}
                   className={`flex items-center gap-2 px-3 py-2 text-xs font-medium transition-all border-b-2 ${bottomTab === tab.id
-                      ? 'text-dark-accent border-dark-accent'
-                      : 'text-dark-muted border-transparent hover:text-dark-text'
+                    ? 'text-dark-accent border-dark-accent'
+                    : 'text-dark-muted border-transparent hover:text-dark-text'
                     }`}
                 >
                   {tab.icon}
@@ -261,10 +277,10 @@ export function MainLayout() {
               <div className="ml-auto flex items-center gap-3 pr-2">
                 <div className="flex items-center gap-1.5">
                   <div className={`w-2 h-2 rounded-full ${jvmState.status === 'running' ? 'bg-green-500 animate-pulse' :
-                      jvmState.status === 'paused' ? 'bg-yellow-500' :
-                        jvmState.status === 'completed' ? 'bg-blue-500' :
-                          jvmState.status === 'error' ? 'bg-red-500' :
-                            'bg-gray-500'
+                    jvmState.status === 'paused' ? 'bg-yellow-500' :
+                      jvmState.status === 'completed' ? 'bg-blue-500' :
+                        jvmState.status === 'error' ? 'bg-red-500' :
+                          'bg-gray-500'
                     }`} />
                   <span className="text-xs text-dark-muted capitalize">{jvmState.status}</span>
                 </div>
@@ -319,10 +335,10 @@ export function MainLayout() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <div className={`w-2 h-2 rounded-full ${jvmState.status === 'running' ? 'bg-green-500 animate-pulse' :
-                jvmState.status === 'paused' ? 'bg-yellow-500' :
-                  jvmState.status === 'completed' ? 'bg-blue-500' :
-                    jvmState.status === 'error' ? 'bg-red-500' :
-                      'bg-gray-500'
+              jvmState.status === 'paused' ? 'bg-yellow-500' :
+                jvmState.status === 'completed' ? 'bg-blue-500' :
+                  jvmState.status === 'error' ? 'bg-red-500' :
+                    'bg-gray-500'
               }`} />
             <span className="text-dark-muted capitalize">{jvmState.status}</span>
           </div>
