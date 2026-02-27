@@ -1,0 +1,6 @@
+export * from './JVMStack'
+export * from './HeapView'
+export * from './MethodArea'
+export * from './ProgramCounter'
+export * from './OutputConsole'
+export * from './VariableHistory'
