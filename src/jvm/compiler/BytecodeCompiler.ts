@@ -742,6 +742,21 @@ export class BytecodeCompiler {
         }
         ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
         ctx.instructions.push(createInstruction(OpCode.STORE_LOCAL, [localOperand(local.index, expr.left.name)], expr.location.line))
+      } else {
+        // Fallback: assume it's an implicit 'this' field assignment
+        ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+        if (expr.operator === '=') {
+          this.compileExpression(expr.right, ctx)
+        } else {
+          ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+          ctx.instructions.push(createInstruction(OpCode.GETFIELD, [fieldOperand(expr.left.name, '')], expr.location.line))
+          this.compileExpression(expr.right, ctx)
+          const op = expr.operator.slice(0, -1)
+          const opMap: Record<string, OpCode> = { '+': OpCode.ADD, '-': OpCode.SUB, '*': OpCode.MUL, '/': OpCode.DIV }
+          ctx.instructions.push(createInstruction(opMap[op], [], expr.location.line))
+        }
+        ctx.instructions.push(createInstruction(OpCode.DUP_X1, [], expr.location.line))
+        ctx.instructions.push(createInstruction(OpCode.PUTFIELD, [fieldOperand(expr.left.name, '')], expr.location.line))
       }
     } else if (expr.left.kind === 'MemberExpression') {
       // Field assignment

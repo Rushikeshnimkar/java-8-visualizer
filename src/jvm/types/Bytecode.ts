@@ -38,6 +38,7 @@ export enum OpCode {
   // Stack Operations
   POP = 'POP',                         // Pop top of stack
   DUP = 'DUP',                         // Duplicate top of stack
+  DUP_X1 = 'DUP_X1',                   // Duplicate top operand and insert two values down
   SWAP = 'SWAP',                       // Swap top two stack values
 
   // Arithmetic Operations
@@ -234,6 +235,7 @@ export function getOpcodeDescription(opcode: OpCode): string {
     [OpCode.RETURN_VALUE]: 'Return with value',
     [OpCode.POP]: 'Pop top of stack',
     [OpCode.DUP]: 'Duplicate top of stack',
+    [OpCode.DUP_X1]: 'Duplicate top operand and insert two values down',
     [OpCode.SWAP]: 'Swap top two values',
     [OpCode.ADD]: 'Add two values',
     [OpCode.SUB]: 'Subtract two values',

@@ -573,10 +573,23 @@ export class Parser {
     const name = this.consume(TokenType.IDENTIFIER, 'Expected variable name').value
     const varType = parseVarDimensions(baseType)
 
-    let initializer: AST.Expression | null = null
-    if (this.match(TokenType.EQUALS)) {
-      initializer = this.parseExpression()
+    const parseInit = (type: AST.TypeNode): AST.Expression | null => {
+      if (this.match(TokenType.EQUALS)) {
+        if (this.check(TokenType.LBRACE)) {
+          return {
+            kind: 'NewArrayExpression',
+            elementType: { ...type, isArray: false, arrayDimensions: 0 },
+            dimensions: [],
+            initializer: this.parseArrayInitializer(),
+            location: this.currentLocation(),
+          }
+        }
+        return this.parseExpression()
+      }
+      return null
     }
+
+    let initializer = parseInit(varType)
 
     // Support: int a = 0, b = 0;  (multi-variable declaration)
     if (this.check(TokenType.COMMA)) {
@@ -587,10 +600,7 @@ export class Parser {
         const extraLoc = this.currentLocation()
         const extraName = this.consume(TokenType.IDENTIFIER, 'Expected variable name').value
         const extraVarType = parseVarDimensions(baseType)
-        let extraInit: AST.Expression | null = null
-        if (this.match(TokenType.EQUALS)) {
-          extraInit = this.parseExpression()
-        }
+        let extraInit = parseInit(extraVarType)
         declarations.push({ kind: 'VariableDeclaration', name: extraName, type: extraVarType, isFinal, initializer: extraInit, location: extraLoc })
       }
       this.consume(TokenType.SEMICOLON, 'Expected ";"')

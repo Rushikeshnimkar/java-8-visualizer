@@ -465,6 +465,19 @@ export class JVMSimulator {
         break
       }
 
+      case OpCode.DUP_X1: {
+        const value1 = frame.operandStack.pop()
+        const value2 = frame.operandStack.pop()
+        if (value1 && value2) {
+          frame.operandStack.push({ ...value1 })
+          frame.operandStack.push(value2)
+          frame.operandStack.push(value1)
+        }
+        description = 'Duplicate top of stack and insert two values down'
+        frame.pc++
+        break
+      }
+
       case OpCode.POP:
         frame.operandStack.pop()
         description = 'Pop top of stack'
