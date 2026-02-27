@@ -5,7 +5,7 @@
 import React, { useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useExecutionStore } from '../../state/executionStore'
-import { HeapObject, Value, valueToString } from '../../jvm/types/JVMState'
+import { HeapObject, valueToString, ReferenceValue } from '../../jvm/types/JVMState'
 
 export function DataStructuresView() {
     const { jvmState } = useExecutionStore()
@@ -39,8 +39,11 @@ export function DataStructuresView() {
         const nextReferencedIds = new Set<string>()
         nodes.forEach((node) => {
             const nextField = node.fields.find((f) => f.name === 'next')
-            if (nextField?.value.kind === 'reference' && nextField.value.objectId) {
-                nextReferencedIds.add(nextField.value.objectId)
+            if (nextField && nextField.value.kind === 'reference') {
+                const refVal = nextField.value as ReferenceValue
+                if (refVal.objectId) {
+                    nextReferencedIds.add(refVal.objectId)
+                }
             }
         })
 
@@ -60,9 +63,14 @@ export function DataStructuresView() {
                 visited.add(curr.id)
 
                 const nextField = curr.fields.find((f) => f.name === 'next')
-                if (nextField?.value.kind === 'reference' && nextField.value.objectId) {
-                    const nextRefId = nextField.value.objectId
-                    curr = nodes.find((n) => n.id === nextRefId)
+                if (nextField && nextField.value.kind === 'reference') {
+                    const refVal = nextField.value as ReferenceValue
+                    if (refVal.objectId) {
+                        const nextRefId = refVal.objectId
+                        curr = nodes.find((n) => n.id === nextRefId)
+                    } else {
+                        curr = undefined
+                    }
                 } else {
                     curr = undefined
                 }
