@@ -112,7 +112,22 @@ export class JVMSimulator {
         isNative: false,
       }
 
-      this.state.stack.push(mainFrame)
+      // Create main thread with its own stack
+      const mainThread: import('../types/JVMState').ThreadState = {
+        id: 'thread_main',
+        name: 'main',
+        stack: [mainFrame],
+        status: 'RUNNABLE',
+        holdingMonitors: [],
+        priority: 5,
+        isDaemon: false,
+        stepCount: 0,
+        interrupted: false,
+      }
+      this.state.threads = [mainThread]
+      this.state.activeThread = 0
+      this.state.stack = mainThread.stack // alias for legacy consumers
+
       this.state.pc = {
         currentInstruction: startIndex,
         currentLine: 1,
@@ -120,6 +135,47 @@ export class JVMSimulator {
         currentClass: this.program.mainClass,
       }
       this.state.status = 'paused'
+    }
+  }
+
+  // ── Thread scheduling helpers ──────────────────────────────────────────────
+
+  /** Return current active ThreadState */
+  private activeThreadState(): import('../types/JVMState').ThreadState | undefined {
+    return this.state.threads[this.state.activeThread]
+  }
+
+  /** Rotate activeThread to the next RUNNABLE thread (round-robin) */
+  private rotateThread(): void {
+    const n = this.state.threads.length
+    if (n <= 1) return
+    const start = this.state.activeThread
+    for (let i = 1; i < n; i++) {
+      const idx = (start + i) % n
+      const t = this.state.threads[idx]
+      if (t.status === 'RUNNABLE' || t.status === 'RUNNING') {
+        this.state.activeThread = idx
+        return
+      }
+    }
+    // If current thread is still runnable, keep it
+  }
+
+  /** Wake threads whose sleep timer has expired or whose join target finished */
+  private tickThreads(): void {
+    for (const t of this.state.threads) {
+      if (t.status === 'TIMED_WAITING' && t.sleepUntilStep !== undefined && this.state.stepNumber >= t.sleepUntilStep) {
+        t.status = 'RUNNABLE'
+        t.sleepUntilStep = undefined
+      }
+      if (t.status === 'WAITING' && t.waitingOnMonitor) {
+        // join() — waiting on another thread id to terminate
+        const targetThread = this.state.threads.find(th => th.id === t.waitingOnMonitor)
+        if (!targetThread || targetThread.status === 'TERMINATED') {
+          t.status = 'RUNNABLE'
+          t.waitingOnMonitor = undefined
+        }
+      }
     }
   }
 
@@ -178,35 +234,130 @@ export class JVMSimulator {
     // Save state to history
     this.saveHistory()
 
-    const frame = this.currentFrame()
+    // Wake sleeping/joining threads
+    this.tickThreads()
+
+    // Find a runnable thread (may skip BLOCKED/WAITING/TIMED_WAITING ones)
+    const activeT = this.activeThreadState()
+    if (!activeT || (activeT.status !== 'RUNNABLE' && activeT.status !== 'RUNNING')) {
+      // Try to find another runnable thread
+      this.rotateThread()
+      const next = this.activeThreadState()
+      if (!next || (next.status !== 'RUNNABLE' && next.status !== 'RUNNING')) {
+        // All threads blocked — check if all terminated
+        const allDone = this.state.threads.every(t => t.status === 'TERMINATED')
+        if (allDone || this.state.threads.length === 0) {
+          this.state.status = 'completed'
+          return { state: this.cloneState(), instruction: null, description: 'All threads completed' }
+        }
+        // Deadlock or all waiting — advance step to allow sleep wakeup
+        this.state.stepNumber++
+        this.tickThreads()
+        return { state: this.cloneState(), instruction: null, description: 'Waiting for threads...' }
+      }
+    }
+
+    const thread = this.activeThreadState()!
+    thread.status = 'RUNNING'
+    this.state.stack = thread.stack // keep alias in sync
+
+    const frame = thread.stack[thread.stack.length - 1]
     if (!frame) {
-      this.state.status = 'completed'
-      return { state: this.cloneState(), instruction: null, description: 'No more frames' }
+      // Thread finished
+      thread.status = 'TERMINATED'
+      // Release any monitors held by this thread
+      for (const monId of thread.holdingMonitors) {
+        this.releaseMonitor(monId, thread.id)
+      }
+      thread.holdingMonitors = []
+      this.rotateThread()
+      this.state.stack = this.activeThreadState()?.stack ?? []
+      this.state.stepNumber++
+      this.state.status = this.state.threads.every(t => t.status === 'TERMINATED') ? 'completed' : 'paused'
+      return { state: this.cloneState(), instruction: null, description: `Thread '${thread.name}' terminated` }
     }
 
     const instruction = this.program.allInstructions[frame.pc]
     if (!instruction) {
-      this.state.status = 'completed'
-      return { state: this.cloneState(), instruction: null, description: 'No more instructions' }
+      thread.status = 'TERMINATED'
+      for (const monId of thread.holdingMonitors) {
+        this.releaseMonitor(monId, thread.id)
+      }
+      thread.holdingMonitors = []
+      this.rotateThread()
+      this.state.stack = this.activeThreadState()?.stack ?? []
+      this.state.stepNumber++
+      this.state.status = this.state.threads.every(t => t.status === 'TERMINATED') ? 'completed' : 'paused'
+      return { state: this.cloneState(), instruction: null, description: `Thread '${thread.name}' finished` }
     }
 
     this.state.status = 'running'
     const description = this.executeInstruction(instruction, frame)
     this.state.stepNumber++
-    this.state.status = this.state.stack.length > 0 ? 'paused' : 'completed'
+    thread.stepCount++
 
-    // Update PC display
-    if (this.state.stack.length > 0) {
-      const currentFrame = this.currentFrame()!
+    // If frame stack is now empty → thread is done
+    if (thread.stack.length === 0) {
+      thread.status = 'TERMINATED'
+      for (const monId of thread.holdingMonitors) {
+        this.releaseMonitor(monId, thread.id)
+      }
+      thread.holdingMonitors = []
+    } else if (thread.status === 'RUNNING') {
+      thread.status = 'RUNNABLE'
+    }
+
+    // Rotate to next runnable thread
+    this.rotateThread()
+    this.state.stack = this.activeThreadState()?.stack ?? []
+
+    this.state.status = this.state.threads.every(t => t.status === 'TERMINATED') ? 'completed' : 'paused'
+
+    // Update PC display from active thread's top frame
+    const atStack = this.activeThreadState()?.stack
+    const activeFrame = atStack && atStack.length > 0 ? atStack[atStack.length - 1] : undefined
+    if (activeFrame) {
       this.state.pc = {
-        currentInstruction: currentFrame.pc,
-        currentLine: currentFrame.lineNumber,
-        currentMethod: currentFrame.methodName,
-        currentClass: currentFrame.className,
+        currentInstruction: activeFrame.pc,
+        currentLine: activeFrame.lineNumber,
+        currentMethod: activeFrame.methodName,
+        currentClass: activeFrame.className,
       }
     }
 
     return { state: this.cloneState(), instruction, description }
+  }
+
+  /** Acquire a monitor for a thread. Returns true if acquired, false if blocked. */
+  private acquireMonitor(objectId: string, threadId: string): boolean {
+    const holder = this.state.monitors[objectId]
+    if (holder === undefined || holder === null || holder === threadId) {
+      // Free or already held by same thread (reentrant)
+      this.state.monitors[objectId] = threadId
+      const thread = this.state.threads.find(t => t.id === threadId)
+      if (thread && !thread.holdingMonitors.includes(objectId)) {
+        thread.holdingMonitors.push(objectId)
+      }
+      return true
+    }
+    return false // Someone else holds it → BLOCKED
+  }
+
+  /** Release a monitor and wake one BLOCKED thread waiting for it */
+  private releaseMonitor(objectId: string, threadId: string): void {
+    if (this.state.monitors[objectId] === threadId) {
+      this.state.monitors[objectId] = null
+      const thread = this.state.threads.find(t => t.id === threadId)
+      if (thread) {
+        thread.holdingMonitors = thread.holdingMonitors.filter(m => m !== objectId)
+      }
+      // Wake one BLOCKED thread waiting for this monitor
+      const waiter = this.state.threads.find(t => t.status === 'BLOCKED' && t.waitingOnMonitor === objectId)
+      if (waiter) {
+        waiter.status = 'RUNNABLE'
+        waiter.waitingOnMonitor = undefined
+      }
+    }
   }
 
   stepBack(): ExecutionResult {
@@ -225,6 +376,12 @@ export class JVMSimulator {
     this.initialize()
   }
 
+  canStepForward(): boolean {
+    if (this.state.status === 'completed' || this.state.status === 'error') return false
+    return this.state.threads.some(t => t.status !== 'TERMINATED') ||
+      this.state.threads.length === 0
+  }
+
   getState(): JVMState {
     return this.cloneState()
   }
@@ -233,9 +390,6 @@ export class JVMSimulator {
     return this.history.length > 0
   }
 
-  canStepForward(): boolean {
-    return this.state.status !== 'completed' && this.state.status !== 'error'
-  }
 
   private saveHistory(): void {
     if (this.history.length >= this.maxHistory) {
@@ -249,7 +403,8 @@ export class JVMSimulator {
   }
 
   private currentFrame(): StackFrame | undefined {
-    return this.state.stack[this.state.stack.length - 1]
+    const t = this.activeThreadState()
+    return t?.stack[t.stack.length - 1]
   }
 
   private executeInstruction(instr: Instruction, frame: StackFrame): string {
@@ -521,7 +676,10 @@ export class JVMSimulator {
             case OpCode.ADD: result = av + bv; break
             case OpCode.SUB: result = av - bv; break
             case OpCode.MUL: result = av * bv; break
-            case OpCode.DIV: result = bv !== 0 ? av / bv : 0; break
+            case OpCode.DIV:
+              result = bv !== 0 ? av / bv : 0;
+              if (a.type === 'int' && b.type === 'int') result = Math.trunc(result);
+              break
             case OpCode.MOD: result = bv !== 0 ? av % bv : 0; break
             default: result = 0
           }
@@ -691,6 +849,40 @@ export class JVMSimulator {
         break
       }
 
+      case OpCode.MONITORENTER: {
+        // Acquire object monitor for synchronized block
+        const lockRef = frame.operandStack.pop()
+        const objectId = lockRef?.kind === 'reference' ? lockRef.objectId : null
+        const activeT = this.activeThreadState()
+        if (objectId && activeT) {
+          const acquired = this.acquireMonitor(objectId, activeT.id)
+          if (!acquired) {
+            // Thread must block — set BLOCKED state, do NOT advance PC so we retry
+            activeT.status = 'BLOCKED'
+            activeT.waitingOnMonitor = objectId
+            // Put the ref back so retry works
+            frame.operandStack.push(lockRef!)
+            description = `MONITORENTER: Thread '${activeT.name}' BLOCKED waiting for monitor @${objectId}`
+            break // don't pc++
+          }
+          description = `MONITORENTER: Thread '${activeT.name}' acquired monitor @${objectId}`
+        }
+        frame.pc++
+        break
+      }
+
+      case OpCode.MONITOREXIT: {
+        const lockRef = frame.operandStack.pop()
+        const objectId = lockRef?.kind === 'reference' ? lockRef.objectId : null
+        const activeT = this.activeThreadState()
+        if (objectId && activeT) {
+          this.releaseMonitor(objectId, activeT.id)
+          description = `MONITOREXIT: Thread '${activeT.name}' released monitor @${objectId}`
+        }
+        frame.pc++
+        break
+      }
+
       case OpCode.LAMBDA_CREATE: {
         const lambdaInfo = (instr.operands[0] as { type: 'string'; value: string }).value
         const lambdaId = this.allocateLambda(lambdaInfo)
@@ -839,13 +1031,25 @@ export class JVMSimulator {
       newLocalVariables.push({ name: locVar?.name || `arg${i}`, type: locVar?.type || 'Object', value: args[i], slot: expectedSlot })
       localSlotIndex = expectedSlot + 1
     }
-    this.state.stack.push({
+
+    const newFrame: StackFrame = {
       id: this.generateFrameId(), className: targetClass!.name, methodName,
       methodSignature: signature, localVariables: newLocalVariables,
       operandStack: [], pc: startIndex, lineNumber: frame.lineNumber, isNative: false,
-    })
+    }
+
+    // Push frame to the CURRENT THREAD's own stack
+    const currentThread = this.activeThreadState()
+    if (currentThread) {
+      currentThread.stack.push(newFrame)
+    } else {
+      this.state.stack.push(newFrame)
+    }
+
     return `Invoke ${methodName}(...)`
   }
+
+
 
   // ============================================
   // Standard Library Emulation
@@ -879,6 +1083,20 @@ export class JVMSimulator {
     const heapOf = (v: Value | undefined) => { const id = getRefId(v); return id ? this.state.heap.find(o => o.id === id) : null }
 
     const obj = objRef ? this.getHeapObj(objRef) : null
+
+    // ---- java.util.Arrays ----
+    if (className === 'java/util/Arrays' || className === 'Arrays') {
+      if (methodName === 'toString' && args.length === 1 && args[0].kind === 'reference') {
+        const arrRef = args[0] as import('../types/JVMState').ReferenceValue
+        const arrObj = this.getHeapObj(arrRef)
+        let str = 'null'
+        if (arrObj && arrObj.className.startsWith('[')) {
+          str = '[' + (arrObj.arrayElements || []).map(e => this.valToString(e)).join(', ') + ']'
+        }
+        frame.operandStack.push(createPrimitiveValue('string', str))
+        return `Arrays.toString(...)`
+      }
+    }
 
     // ---- String (primitive or heap) ----
     const strVal = objRef?.kind === 'primitive' && objRef.type === 'string' ? String(objRef.value ?? '') : null
@@ -1372,27 +1590,230 @@ export class JVMSimulator {
     }
 
     // ---- Thread ----
-    if (className === 'Thread' || (obj && obj.className === 'Thread') || (obj && obj.className === '$Thread')) {
+    const isThreadClass = className === 'Thread'
+      || this.isSubclassOf(className, 'Thread')
+      || (obj && (obj.className === 'Thread' || this.isSubclassOf(obj.className, 'Thread')))
+    if (isThreadClass) {
+      const activeT = this.activeThreadState()
+
       switch (methodName) {
         case '<init>': {
-          if (obj) { obj.fields.push({ name: 'name', type: 'String', value: createPrimitiveValue('string', args[1]?.kind === 'primitive' ? String(args[1].value) : 'Thread-' + this.state.threads.length), isStatic: false }) }
+          if (obj) {
+            // Only set fields if not already set (subclass may call super() multiple times)
+            if (!obj.fields.find(f => f.name === '$threadId')) {
+              const threadName = args[0]?.kind === 'primitive' ? String(args[0].value) : `Thread-${this.state.threads.length}`
+              obj.fields.push({ name: '$threadId', type: 'String', value: createPrimitiveValue('string', `thread_${this.state.threads.length}`), isStatic: false })
+              obj.fields.push({ name: 'name', type: 'String', value: createPrimitiveValue('string', threadName), isStatic: false })
+              obj.fields.push({ name: 'priority', type: 'int', value: createPrimitiveValue('int', 5), isStatic: false })
+              obj.fields.push({ name: 'daemon', type: 'boolean', value: createPrimitiveValue('boolean', false), isStatic: false })
+              obj.fields.push({ name: '$status', type: 'String', value: createPrimitiveValue('string', 'NEW'), isStatic: false })
+            }
+          }
           return `Thread.<init>`
         }
         case 'start': {
+          // Get the heap object robustly — obj might be null if getHeapObj failed on the ref type
+          let threadObj = obj
+          if (!threadObj && objRef) {
+            const refId = (objRef as any).objectId as string | null | undefined
+            if (refId) threadObj = this.state.heap.find(o => o.id === refId) ?? null
+          }
+          // The class to look for run() — use className from the instruction if obj is null
+          const runClassName = threadObj?.className ?? className
+
+          if (threadObj || runClassName !== 'Thread') {
+            // Ensure required fields exist
+            if (threadObj && !threadObj.fields.find(f => f.name === '$threadId')) {
+              const uniqueIdx = this.state.threads.length
+              threadObj.fields.push({ name: '$threadId', type: 'String', value: createPrimitiveValue('string', `thread_${uniqueIdx}`), isStatic: false })
+              threadObj.fields.push({ name: 'name', type: 'String', value: createPrimitiveValue('string', `Thread-${uniqueIdx}`), isStatic: false })
+              threadObj.fields.push({ name: 'priority', type: 'int', value: createPrimitiveValue('int', 5), isStatic: false })
+              threadObj.fields.push({ name: 'daemon', type: 'boolean', value: createPrimitiveValue('boolean', false), isStatic: false })
+              threadObj.fields.push({ name: '$status', type: 'String', value: createPrimitiveValue('string', 'NEW'), isStatic: false })
+            }
+            const uniqueIdx = this.state.threads.length
+            const nameF = threadObj?.fields.find(f => f.name === 'name')
+            const idF = threadObj?.fields.find(f => f.name === '$threadId')
+            const name = nameF?.value.kind === 'primitive' ? String(nameF.value.value) : `Thread-${uniqueIdx}`
+            const threadId = idF?.value.kind === 'primitive' ? String(idF.value.value) : `thread_${uniqueIdx}`
+
+            // Find run() method – walk class hierarchy
+            console.log('[Thread.start] runClassName=', runClassName, 'classes=', this.program.classes.map(c => c.name), 'threadObj=', threadObj?.className, 'threadObj.id=', threadObj?.id)
+            let runMethodNode = this.program.classes.find(c => c.name === runClassName)?.methods.find(m => m.methodName === 'run')
+            console.log('[Thread.start] runMethodNode=', runMethodNode?.methodName, 'sig=', runMethodNode?.signature)
+
+            let resolvedClass = runClassName
+            if (!runMethodNode) {
+              let sc = this.program.classes.find(c => c.name === runClassName)?.superClass
+              while (sc && sc !== 'Object' && sc !== 'Thread') {
+                const cls = this.program.classes.find(c => c.name === sc)
+                runMethodNode = cls?.methods.find(m => m.methodName === 'run')
+                if (runMethodNode) { resolvedClass = sc; break }
+                sc = cls?.superClass
+              }
+            }
+
+            if (runMethodNode) {
+              const sig = runMethodNode.signature
+              const startIdx = this.program.methodOffsets.get(`${resolvedClass}.${sig}`) ?? 0
+              const thisValue = objRef ?? (threadObj ? createReferenceValue(threadObj.id) : createNullValue())
+              const runFrame: StackFrame = {
+                id: this.generateFrameId(),
+                className: resolvedClass,
+                methodName: 'run',
+                methodSignature: sig,
+                localVariables: [{ name: 'this', type: runClassName, value: thisValue, slot: 0 }],
+                operandStack: [],
+                pc: startIdx,
+                lineNumber: 0,
+                isNative: false,
+              }
+              const newThread: import('../types/JVMState').ThreadState = {
+                id: threadId,
+                name,
+                stack: [runFrame],
+                status: 'RUNNABLE',
+                holdingMonitors: [],
+                objectId: threadObj?.id,
+                priority: 5,
+                isDaemon: false,
+                stepCount: 0,
+                interrupted: false,
+              }
+              this.state.threads.push(newThread)
+              if (threadObj) {
+                const statusF = threadObj.fields.find(f => f.name === '$status')
+                if (statusF) statusF.value = createPrimitiveValue('string', 'RUNNABLE')
+              }
+              return `Thread.start() → spawned '${name}' (${threadId}) running ${resolvedClass}.run()`
+            }
+          }
+          return `Thread.start [run() not found in ${runClassName}]`
+        }
+        case 'sleep': {
+          const ms = args[0]?.kind === 'primitive' ? (args[0].value as number) : 100
+          const steps = Math.max(1, Math.round(ms / 50)) // ~50ms per step for visualization
+          if (activeT) {
+            activeT.status = 'TIMED_WAITING'
+            activeT.sleepUntilStep = this.state.stepNumber + steps
+          }
+          return `Thread.sleep(${ms}ms) → TIMED_WAITING for ${steps} steps`
+        }
+        case 'join': {
+          // Caller waits for the target thread to terminate
+          if (obj && activeT) {
+            const idF = obj.fields.find(f => f.name === '$threadId')
+            const targetId = idF?.value.kind === 'primitive' ? String(idF.value.value) : null
+            if (targetId) {
+              const targetThread = this.state.threads.find(t => t.id === targetId)
+              if (targetThread && targetThread.status !== 'TERMINATED') {
+                activeT.status = 'WAITING'
+                activeT.waitingOnMonitor = targetId // reuse field for join target
+              }
+            }
+          }
+          return `Thread.join()`
+        }
+        case 'wait': {
+          if (objRef?.kind === 'reference' && objRef.objectId && activeT) {
+            activeT.status = 'WAITING'
+            activeT.waitingOnMonitor = objRef.objectId
+            this.releaseMonitor(objRef.objectId, activeT.id)
+          }
+          return `Object.wait() → WAITING`
+        }
+        case 'notify': {
+          if (objRef?.kind === 'reference' && objRef.objectId) {
+            const waiter = this.state.threads.find(t => t.status === 'WAITING' && t.waitingOnMonitor === objRef.objectId)
+            if (waiter) {
+              waiter.status = 'RUNNABLE'
+              waiter.waitingOnMonitor = undefined
+            }
+          }
+          return `Object.notify()`
+        }
+        case 'notifyAll': {
+          if (objRef?.kind === 'reference' && objRef.objectId) {
+            for (const t of this.state.threads) {
+              if (t.status === 'WAITING' && t.waitingOnMonitor === objRef.objectId) {
+                t.status = 'RUNNABLE'
+                t.waitingOnMonitor = undefined
+              }
+            }
+          }
+          return `Object.notifyAll()`
+        }
+        case 'getName': {
+          let n = 'main'
           if (obj) {
             const nameF = obj.fields.find(f => f.name === 'name')
-            const name = nameF?.value.kind === 'primitive' ? String(nameF.value.value) : `Thread-${this.state.threads.length}`
-            const thread: import('../types/JVMState').ThreadState = { id: `thread_${this.state.threads.length}`, name, stack: [], status: 'alive' }
-            this.state.threads.push(thread)
+            if (nameF && nameF.value.kind === 'primitive') n = String(nameF.value.value)
+          } else if (activeT) {
+            n = activeT.name
           }
-          frame.operandStack.push(createNullValue()); return `Thread.start`
+          frame.operandStack.push(createPrimitiveValue('string', n))
+          return `Thread.getName()`
         }
-        case 'sleep': frame.operandStack.push(createNullValue()); return `Thread.sleep [no-op in simulation]`
-        case 'join': frame.operandStack.push(createNullValue()); return `Thread.join [no-op in simulation]`
-        case 'getName': { const nameF = obj?.fields.find(f => f.name === 'name'); frame.operandStack.push(nameF ? { ...nameF.value } : createPrimitiveValue('string', 'main')); return `Thread.getName` }
-        case 'currentThread': { frame.operandStack.push(createReferenceValue(null)); return `Thread.currentThread` }
-        case 'interrupt': case 'isInterrupted': case 'interrupted': frame.operandStack.push(createPrimitiveValue('boolean', false)); return `Thread.${methodName}`
-        case 'wait': case 'notify': case 'notifyAll': frame.operandStack.push(createNullValue()); return `Object.${methodName} [no-op in simulation]`
+        case 'getId': {
+          let currentId = 'main'
+          if (obj) {
+            const idF = obj.fields.find(f => f.name === '$threadId')
+            if (idF && idF.value.kind === 'primitive') currentId = String(idF.value.value)
+          } else if (activeT) {
+            currentId = activeT.id
+          }
+          frame.operandStack.push(createPrimitiveValue('string', currentId))
+          return `Thread.getId()`
+        }
+        case 'getState': {
+          let tId = null
+          if (obj) {
+            const idF = obj.fields.find(f => f.name === '$threadId')
+            if (idF && idF.value.kind === 'primitive') tId = String(idF.value.value)
+          } else if (activeT) {
+            tId = activeT.id
+          }
+          const t = tId ? this.state.threads.find(th => th.id === tId) : null
+          frame.operandStack.push(createPrimitiveValue('string', t?.status ?? 'TERMINATED'))
+          return `Thread.getState()`
+        }
+        case 'isAlive': {
+          const idF = obj?.fields.find(f => f.name === '$threadId')
+          const tId = idF?.value.kind === 'primitive' ? String(idF.value.value) : null
+          const t = tId ? this.state.threads.find(th => th.id === tId) : null
+          frame.operandStack.push(createPrimitiveValue('boolean', t ? t.status !== 'TERMINATED' && t.status !== 'NEW' : false))
+          return `Thread.isAlive()`
+        }
+        case 'setPriority': {
+          const p = args[0]?.kind === 'primitive' ? (args[0].value as number) : 5
+          if (obj) { const pf = obj.fields.find(f => f.name === 'priority'); if (pf) pf.value = createPrimitiveValue('int', p) }
+          return `Thread.setPriority(${p})`
+        }
+        case 'setDaemon': {
+          const d = args[0]?.kind === 'primitive' ? Boolean(args[0].value) : false
+          if (obj) { const df = obj.fields.find(f => f.name === 'daemon'); if (df) df.value = createPrimitiveValue('boolean', d) }
+          return `Thread.setDaemon(${d})`
+        }
+        case 'currentThread': {
+          const refId = activeT?.objectId ?? null
+          frame.operandStack.push(createReferenceValue(refId)); return `Thread.currentThread()`
+        }
+        case 'interrupt': {
+          if (activeT) activeT.interrupted = true
+          return `Thread.interrupt()`
+        }
+        case 'isInterrupted': {
+          const idF = obj?.fields.find(f => f.name === '$threadId')
+          const tId = idF?.value.kind === 'primitive' ? String(idF.value.value) : null
+          const t = tId ? this.state.threads.find(th => th.id === tId) : activeT
+          frame.operandStack.push(createPrimitiveValue('boolean', t?.interrupted ?? false)); return `Thread.isInterrupted()`
+        }
+        case 'interrupted': {
+          const wasInterrupted = activeT?.interrupted ?? false
+          if (activeT) activeT.interrupted = false // clears flag
+          frame.operandStack.push(createPrimitiveValue('boolean', wasInterrupted)); return `Thread.interrupted()`
+        }
+        case 'yield': frame.operandStack.push(createNullValue()); this.rotateThread(); return `Thread.yield()`
       }
     }
 
@@ -1541,5 +1962,18 @@ export class JVMSimulator {
 
     this.state.heap.push(obj)
     return id
+  }
+
+  /** Walk the class hierarchy to check if childClass extends parentClass */
+  private isSubclassOf(childClass: string, parentClass: string): boolean {
+    if (!childClass || childClass === parentClass) return true
+    let current = childClass
+    while (current && current !== 'Object') {
+      const cls = this.program.classes.find(c => c.name === current)
+      if (!cls) break
+      if (cls.superClass === parentClass) return true
+      current = cls.superClass
+    }
+    return false
   }
 }

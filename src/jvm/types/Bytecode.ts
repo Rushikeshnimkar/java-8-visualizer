@@ -91,6 +91,10 @@ export enum OpCode {
   BREAKPOINT = 'BREAKPOINT',           // Debugger breakpoint
   THROW = 'THROW',                     // Throw exception
 
+  // Synchronization
+  MONITORENTER = 'MONITORENTER',       // Acquire object monitor (synchronized)
+  MONITOREXIT = 'MONITOREXIT',         // Release object monitor
+
   // Class Operations
   LOAD_CLASS = 'LOAD_CLASS',           // Load class into method area
 }
@@ -271,6 +275,8 @@ export function getOpcodeDescription(opcode: OpCode): string {
     [OpCode.LINE]: 'Source line marker',
     [OpCode.BREAKPOINT]: 'Breakpoint',
     [OpCode.THROW]: 'Throw exception',
+    [OpCode.MONITORENTER]: 'Acquire object monitor (synchronized enter)',
+    [OpCode.MONITOREXIT]: 'Release object monitor (synchronized exit)',
     [OpCode.LOAD_CLASS]: 'Load class definition',
   }
   return descriptions[opcode] || opcode

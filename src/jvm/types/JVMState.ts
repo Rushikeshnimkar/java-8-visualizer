@@ -152,16 +152,25 @@ export interface ProgramCounter {
 
 export type ExecutionStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error'
 
+export type ThreadStatus = 'NEW' | 'RUNNABLE' | 'RUNNING' | 'BLOCKED' | 'WAITING' | 'TIMED_WAITING' | 'TERMINATED'
+
 export interface ThreadState {
   id: string
   name: string
   stack: StackFrame[]
-  status: 'alive' | 'dead' | 'waiting' | 'sleeping'
-  sleepUntilStep?: number
+  status: ThreadStatus
+  sleepUntilStep?: number       // wake from TIMED_WAITING after this step
+  waitingOnMonitor?: string     // objectId of object whose monitor we are waiting for
+  holdingMonitors: string[]     // objectIds of monitors this thread holds
+  objectId?: string             // heap object id for this Thread instance
+  priority: number              // 1-10, default 5
+  isDaemon: boolean
+  stepCount: number             // instructions executed by this thread
+  interrupted: boolean
 }
 
 export interface JVMState {
-  stack: StackFrame[]       // current thread's stack (primary thread)
+  stack: StackFrame[]       // current thread's stack (primary thread, alias into threads[activeThread].stack)
   heap: HeapObject[]
   methodArea: MethodArea
   pc: ProgramCounter
@@ -170,9 +179,11 @@ export interface JVMState {
   stepNumber: number
   output: string[] // System.out.println output
   error?: string
-  threads: ThreadState[]    // all threads (index 0 = main thread alias)
+  threads: ThreadState[]    // all threads
   activeThread: number      // index into threads array
+  monitors: Record<string, string | null> // objectId → threadId holding it (null = free)
 }
+
 
 // ============================================
 // Helpers
@@ -232,5 +243,6 @@ export function createInitialJVMState(): JVMState {
     output: [],
     threads: [],
     activeThread: 0,
+    monitors: {},
   }
 }

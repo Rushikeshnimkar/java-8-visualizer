@@ -12,9 +12,11 @@ import { MethodArea } from '../Visualizations/MethodArea'
 import { ProgramCounter } from '../Visualizations/ProgramCounter'
 import { OutputConsole, DataStructuresView } from '../Visualizations'
 import { VariableHistory, AllVariablesPanel } from '../Visualizations/VariableHistory'
+import ThreadsView from '../Visualizations/ThreadsView'
+import { DisclaimerModal } from './DisclaimerModal'
 import { useExecutionStore } from '../../state/executionStore'
 
-type VisualizationTab = 'data-structures' | 'stack' | 'heap' | 'variables' | 'history'
+type VisualizationTab = 'data-structures' | 'stack' | 'heap' | 'variables' | 'history' | 'threads'
 type BottomTab = 'output' | 'method-area' | 'pc'
 
 export function MainLayout() {
@@ -52,6 +54,12 @@ export function MainLayout() {
       label: 'History',
       icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     },
+    {
+      id: 'threads',
+      label: 'Threads',
+      icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" strokeWidth={2} /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" /></svg>,
+      badge: jvmState.threads.filter(t => t.status !== 'TERMINATED').length,
+    },
   ]
 
   const bottomTabs: { id: BottomTab; label: string; icon: JSX.Element }[] = [
@@ -74,6 +82,7 @@ export function MainLayout() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-dark-bg text-dark-text overflow-hidden">
+      <DisclaimerModal />
       {/* Header */}
       <header className="flex-shrink-0 h-14 bg-dark-card border-b border-dark-border flex items-center px-4 gap-4">
         <div className="flex items-center gap-3">
@@ -225,6 +234,17 @@ export function MainLayout() {
                   className="h-full"
                 >
                   <VariableHistory />
+                </motion.div>
+              )}
+              {activeTab === 'threads' && (
+                <motion.div
+                  key="threads"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  className="h-full overflow-auto"
+                >
+                  <ThreadsView />
                 </motion.div>
               )}
             </AnimatePresence>
