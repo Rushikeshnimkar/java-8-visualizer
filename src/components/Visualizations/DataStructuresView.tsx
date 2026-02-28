@@ -2,7 +2,7 @@
 // Data Structures Tab – Arrays, Lists, Maps, Sets, Linked Lists
 // ============================================
 
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useExecutionStore } from '../../state/executionStore'
 import { HeapObject, valueToString, ReferenceValue, Value } from '../../jvm/types/JVMState'
@@ -72,8 +72,46 @@ export function DataStructuresView() {
             !o.className.includes('$')
         ), [heap])
 
+    // ── Binary Tree detection ──
+    const binaryTrees = useMemo(() => {
+        // Tree nodes have left AND right fields
+        const treeNodes = heap.filter(o => {
+            const hasLeft = o.fields.some(f => f.name === 'left')
+            const hasRight = o.fields.some(f => f.name === 'right')
+            return o.type === 'object' && hasLeft && hasRight
+        })
+        if (treeNodes.length === 0) return []
+
+        // Build set of all child-referenced IDs
+        const childIds = new Set<string>()
+        treeNodes.forEach(node => {
+            const leftField = node.fields.find(f => f.name === 'left')
+            const rightField = node.fields.find(f => f.name === 'right')
+            if (leftField && leftField.value.kind === 'reference') {
+                const rv = leftField.value as ReferenceValue
+                if (rv.objectId) childIds.add(rv.objectId)
+            }
+            if (rightField && rightField.value.kind === 'reference') {
+                const rv = rightField.value as ReferenceValue
+                if (rv.objectId) childIds.add(rv.objectId)
+            }
+        })
+
+        // Roots are nodes not referenced as children
+        const roots = treeNodes.filter(n => !childIds.has(n.id))
+        return roots.map(root => ({ root, allNodes: treeNodes }))
+    }, [heap])
+
+    // Collect tree node IDs so linked-list detection can skip them
+    const treeNodeIds = useMemo(() => {
+        const ids = new Set<string>()
+        binaryTrees.forEach(({ allNodes }) => allNodes.forEach(n => ids.add(n.id)))
+        return ids
+    }, [binaryTrees])
+
     const linkedListChains = useMemo(() => {
         const nodes = heap.filter(o => {
+            if (treeNodeIds.has(o.id)) return false // skip tree nodes
             const hasNext = o.fields.some(f => f.name === 'next')
             const hasData = o.fields.some(f => ['val', 'data', 'value'].includes(f.name))
             return hasNext && hasData
@@ -102,11 +140,12 @@ export function DataStructuresView() {
             }
             return chain
         })
-    }, [heap])
+    }, [heap, treeNodeIds])
 
     const isEmpty =
         hashMaps.length === 0 && hashSets.length === 0 &&
-        lists.length === 0 && arrays.length === 0 && linkedListChains.length === 0
+        lists.length === 0 && arrays.length === 0 && linkedListChains.length === 0 &&
+        binaryTrees.length === 0
 
     if (isEmpty) {
         return (
@@ -166,6 +205,16 @@ export function DataStructuresView() {
                     {linkedListChains.map((chain, i) => <LinkedListVisualization key={i} chain={chain} />)}
                 </Section>
             )}
+
+            {/* ── Binary Trees ── */}
+            {binaryTrees.length > 0 && (
+                <Section title="Binary Trees" color="text-emerald-400" borderColor="border-emerald-400/30"
+                    icon={<TreeIcon />}>
+                    {binaryTrees.map(({ root, allNodes }) => (
+                        <BinaryTreeVisualization key={root.id} root={root} allNodes={allNodes} />
+                    ))}
+                </Section>
+            )}
         </div>
     )
 }
@@ -210,6 +259,15 @@ const LinkIcon = () => (
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+    </svg>
+)
+const TreeIcon = () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <circle cx="12" cy="5" r="2" strokeWidth={2} />
+        <circle cx="6" cy="13" r="2" strokeWidth={2} />
+        <circle cx="18" cy="13" r="2" strokeWidth={2} />
+        <line x1="12" y1="7" x2="6" y2="11" strokeWidth={2} />
+        <line x1="12" y1="7" x2="18" y2="11" strokeWidth={2} />
     </svg>
 )
 
@@ -735,6 +793,500 @@ function LinkedListVisualization({ chain }: { chain: HeapObject[] }) {
                         </React.Fragment>
                     )
                 })}
+            </div>
+        </div>
+    )
+}
+
+// ─── Binary Tree Visualization ────────────────────────────────────────────────
+
+interface TreeLayoutNode {
+    obj: HeapObject
+    x: number
+    y: number
+    left: TreeLayoutNode | null
+    right: TreeLayoutNode | null
+    depth: number
+    value: string
+}
+
+function buildTreeLayout(
+    node: HeapObject | undefined,
+    allNodes: HeapObject[],
+    depth: number,
+    visited: Set<string>
+): TreeLayoutNode | null {
+    if (!node || visited.has(node.id)) return null
+    visited.add(node.id)
+
+    // Get display value
+    const dataField = node.fields.find(f => ['val', 'data', 'value', 'key'].includes(f.name))
+    const value = dataField ? displayValue(dataField.value) : `@${node.id}`
+
+    // Find left and right children
+    const leftField = node.fields.find(f => f.name === 'left')
+    const rightField = node.fields.find(f => f.name === 'right')
+
+    let leftChild: HeapObject | undefined
+    let rightChild: HeapObject | undefined
+
+    if (leftField && leftField.value.kind === 'reference') {
+        const rv = leftField.value as ReferenceValue
+        if (rv.objectId) leftChild = allNodes.find(n => n.id === rv.objectId)
+    }
+    if (rightField && rightField.value.kind === 'reference') {
+        const rv = rightField.value as ReferenceValue
+        if (rv.objectId) rightChild = allNodes.find(n => n.id === rv.objectId)
+    }
+
+    return {
+        obj: node,
+        x: 0, // computed later
+        y: 0,
+        left: buildTreeLayout(leftChild, allNodes, depth + 1, visited),
+        right: buildTreeLayout(rightChild, allNodes, depth + 1, visited),
+        depth,
+        value,
+    }
+}
+
+function getTreeDepth(node: TreeLayoutNode | null): number {
+    if (!node) return 0
+    return 1 + Math.max(getTreeDepth(node.left), getTreeDepth(node.right))
+}
+
+function assignPositions(
+    node: TreeLayoutNode | null,
+    counter: { val: number },
+    verticalGap: number
+): void {
+    if (!node) return
+    // In-order traversal assigns x positions
+    assignPositions(node.left, counter, verticalGap)
+    node.x = counter.val * 70 // horizontal spacing
+    node.y = node.depth * verticalGap
+    counter.val++
+    assignPositions(node.right, counter, verticalGap)
+}
+
+function collectNodes(node: TreeLayoutNode | null, result: TreeLayoutNode[]): void {
+    if (!node) return
+    result.push(node)
+    collectNodes(node.left, result)
+    collectNodes(node.right, result)
+}
+
+interface TreeEdge {
+    parent: TreeLayoutNode
+    child: TreeLayoutNode
+    direction: 'left' | 'right'
+}
+
+function collectEdges(node: TreeLayoutNode | null, result: TreeEdge[]): void {
+    if (!node) return
+    if (node.left) {
+        result.push({ parent: node, child: node.left, direction: 'left' })
+        collectEdges(node.left, result)
+    }
+    if (node.right) {
+        result.push({ parent: node, child: node.right, direction: 'right' })
+        collectEdges(node.right, result)
+    }
+}
+
+interface NullEdge {
+    parent: TreeLayoutNode
+    direction: 'left' | 'right'
+}
+
+function collectNullEdges(node: TreeLayoutNode | null, result: NullEdge[]): void {
+    if (!node) return
+    if (!node.left) result.push({ parent: node, direction: 'left' })
+    if (!node.right) result.push({ parent: node, direction: 'right' })
+    collectNullEdges(node.left, result)
+    collectNullEdges(node.right, result)
+}
+
+function BinaryTreeVisualization({ root, allNodes }: { root: HeapObject; allNodes: HeapObject[] }) {
+    const { jvmState } = useExecutionStore()
+    const treeLayout = useMemo(() => {
+        const visited = new Set<string>()
+        const tree = buildTreeLayout(root, allNodes, 0, visited)
+        if (!tree) return null
+
+        const depth = getTreeDepth(tree)
+        const verticalGap = Math.max(70, 90 - depth * 5)
+        const counter = { val: 0 }
+        assignPositions(tree, counter, verticalGap)
+        return tree
+    }, [root, allNodes])
+
+    // ── Traversal state detection ──
+    const treeNodeIdSet = useMemo(() => new Set(allNodes.map(n => n.id)), [allNodes])
+
+    // Scan stack frames for references to tree nodes
+    // Skip 'main' and constructor frames — we only want traversal methods (dfs, bfs, etc.)
+    const { activeNodeId, pathNodeIds } = useMemo(() => {
+        const pathIds: string[] = []
+        // Walk frames from bottom to top
+        for (const frame of jvmState.stack) {
+            // Skip main and constructors — they build the tree, not traverse it
+            if (frame.methodName === 'main' || frame.methodName === '<init>') continue
+            for (const local of frame.localVariables) {
+                if (local.value.kind === 'reference') {
+                    const rv = local.value as ReferenceValue
+                    if (rv.objectId && treeNodeIdSet.has(rv.objectId) && !pathIds.includes(rv.objectId)) {
+                        pathIds.push(rv.objectId)
+                    }
+                }
+            }
+        }
+        const active = pathIds.length > 0 ? pathIds[pathIds.length - 1] : null
+        const pathSet = new Set(pathIds.slice(0, -1))
+        return { activeNodeId: active, pathNodeIds: pathSet }
+    }, [jvmState.stack, treeNodeIdSet])
+
+    // Track visited nodes persistently across steps
+    const [visitedNodes, setVisitedNodes] = useState<Map<string, number>>(new Map())
+    const prevActiveRef = useRef<string | null>(null)
+
+    useEffect(() => {
+        // Reset when execution restarts
+        if (jvmState.stepNumber === 0) {
+            setVisitedNodes(new Map())
+            prevActiveRef.current = null
+            return
+        }
+        // When a new node becomes active, record it
+        if (activeNodeId && activeNodeId !== prevActiveRef.current) {
+            setVisitedNodes(prev => {
+                if (prev.has(activeNodeId)) return prev
+                const next = new Map(prev)
+                next.set(activeNodeId, next.size + 1)
+                return next
+            })
+        }
+        prevActiveRef.current = activeNodeId
+    }, [activeNodeId, jvmState.stepNumber])
+
+    // Mark nodes that left the stack as fully visited (green)
+    // A node is "completed" if it was visited but is no longer active or on path
+    const getNodeState = (nodeId: string): 'active' | 'path' | 'visited' | 'unvisited' => {
+        if (nodeId === activeNodeId) return 'active'
+        if (pathNodeIds.has(nodeId)) return 'path'
+        if (visitedNodes.has(nodeId)) return 'visited'
+        return 'unvisited'
+    }
+
+    const isTraversing = activeNodeId !== null || visitedNodes.size > 0
+
+    if (!treeLayout) return null
+
+    const nodes: TreeLayoutNode[] = []
+    collectNodes(treeLayout, nodes)
+
+    const edges: TreeEdge[] = []
+    collectEdges(treeLayout, edges)
+
+    const nullEdges: NullEdge[] = []
+    collectNullEdges(treeLayout, nullEdges)
+
+    const totalDepth = getTreeDepth(treeLayout)
+    const nodeRadius = 22
+    const padding = 40
+
+    const minX = Math.min(...nodes.map(n => n.x)) - padding
+    const maxX = Math.max(...nodes.map(n => n.x)) + padding
+    const minY = -padding
+    const maxY = Math.max(...nodes.map(n => n.y)) + padding + 30
+    const svgWidth = maxX - minX + nodeRadius * 2
+    const svgHeight = maxY - minY + nodeRadius * 2
+    const offsetX = -minX + nodeRadius
+    const offsetY = -minY + nodeRadius
+
+    // Build visit order trail
+    const visitTrail = Array.from(visitedNodes.entries())
+        .sort((a, b) => a[1] - b[1])
+        .map(([id]) => {
+            const n = nodes.find(nd => nd.obj.id === id)
+            return n ? n.value : '?'
+        })
+
+    // Node style helper
+    const nodeStyle = (state: 'active' | 'path' | 'visited' | 'unvisited', isRoot: boolean) => {
+        switch (state) {
+            case 'active': return {
+                fill: 'rgba(245, 158, 11, 0.3)',
+                stroke: '#f59e0b',
+                strokeWidth: 3,
+                textFill: '#fef3c7',
+                glowColor: '#f59e0b',
+            }
+            case 'path': return {
+                fill: 'rgba(34, 211, 238, 0.15)',
+                stroke: '#22d3ee',
+                strokeWidth: 2.5,
+                textFill: '#cffafe',
+                glowColor: '#22d3ee',
+            }
+            case 'visited': return {
+                fill: 'rgba(16, 185, 129, 0.25)',
+                stroke: '#10b981',
+                strokeWidth: 2,
+                textFill: '#a7f3d0',
+                glowColor: null,
+            }
+            default: return {
+                fill: isRoot ? 'rgba(16, 185, 129, 0.2)' : 'rgba(30, 30, 46, 0.9)',
+                stroke: isRoot ? '#34d399' : '#4b5563',
+                strokeWidth: isRoot ? 2.5 : 2,
+                textFill: isRoot ? '#a7f3d0' : '#e5e7eb',
+                glowColor: isRoot ? '#34d399' : null,
+            }
+        }
+    }
+
+    return (
+        <div className="bg-dark-card border border-emerald-500/20 rounded-xl p-4 shadow-lg shadow-emerald-900/10">
+            {/* Pulse animation keyframes */}
+            <style>{`
+                @keyframes treePulse {
+                    0%, 100% { opacity: 0.4; r: ${nodeRadius + 6}; }
+                    50% { opacity: 0.8; r: ${nodeRadius + 10}; }
+                }
+                .tree-pulse { animation: treePulse 1.2s ease-in-out infinite; }
+            `}</style>
+
+            {/* Header */}
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-emerald-400/60">@{root.id}</span>
+                    <span className="font-bold text-emerald-300">{root.className}</span>
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                    <StatBadge label="nodes" value={nodes.length} color="bg-emerald-500/20 text-emerald-300" />
+                    <StatBadge label="depth" value={totalDepth} color="bg-dark-bg text-dark-muted" />
+                    {isTraversing && (
+                        <StatBadge label="visited" value={visitedNodes.size} color="bg-amber-500/20 text-amber-300" />
+                    )}
+                </div>
+            </div>
+
+            {/* Legend */}
+            <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-dark-muted">
+                <div className="flex items-center gap-1.5">
+                    <div className="w-6 h-0.5 bg-cyan-400 rounded" />
+                    <span>Left</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                    <div className="w-6 h-0.5 bg-emerald-400 rounded" />
+                    <span>Right</span>
+                </div>
+                {isTraversing && (
+                    <>
+                        <div className="w-px h-3 bg-dark-border" />
+                        <div className="flex items-center gap-1.5">
+                            <div className="w-3 h-3 rounded-full bg-amber-500/30 border-2 border-amber-500" />
+                            <span>Active</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <div className="w-3 h-3 rounded-full bg-cyan-500/15 border-2 border-cyan-400" />
+                            <span>In Stack</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <div className="w-3 h-3 rounded-full bg-emerald-500/25 border-2 border-emerald-500" />
+                            <span>Visited</span>
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {/* Tree SVG */}
+            <div className="overflow-x-auto pb-2 hide-scrollbar">
+                <svg
+                    width={svgWidth}
+                    height={svgHeight}
+                    className="mx-auto"
+                    style={{ minWidth: svgWidth }}
+                >
+                    {/* Edges */}
+                    {edges.map((edge, i) => {
+                        const childState = getNodeState(edge.child.obj.id)
+                        const isActiveEdge = childState === 'active' || childState === 'path'
+                        const isVisitedEdge = childState === 'visited'
+                        const baseColor = edge.direction === 'left' ? '#22d3ee' : '#34d399'
+                        return (
+                            <motion.line
+                                key={`edge-${i}`}
+                                x1={edge.parent.x + offsetX}
+                                y1={edge.parent.y + offsetY + nodeRadius}
+                                x2={edge.child.x + offsetX}
+                                y2={edge.child.y + offsetY - nodeRadius}
+                                stroke={isActiveEdge ? '#f59e0b' : baseColor}
+                                strokeWidth={isActiveEdge ? 3 : 2}
+                                strokeOpacity={isActiveEdge ? 0.9 : isVisitedEdge ? 0.7 : 0.4}
+                                initial={{ pathLength: 0, opacity: 0 }}
+                                animate={{ pathLength: 1, opacity: 1 }}
+                                transition={{ delay: 0.1 + i * 0.05, duration: 0.3 }}
+                            />
+                        )
+                    })}
+
+                    {/* Null indicators */}
+                    {nullEdges.map((ne, i) => {
+                        const px = ne.parent.x + offsetX
+                        const py = ne.parent.y + offsetY + nodeRadius
+                        const nx = px + (ne.direction === 'left' ? -20 : 20)
+                        const ny = py + 25
+                        return (
+                            <g key={`null-${i}`} opacity={0.35}>
+                                <line x1={px} y1={py} x2={nx} y2={ny}
+                                    stroke={ne.direction === 'left' ? '#22d3ee' : '#34d399'}
+                                    strokeWidth={1.5} strokeDasharray="4 3" />
+                                <line x1={nx - 6} y1={ny} x2={nx + 6} y2={ny} stroke="#6b7280" strokeWidth={1.5} />
+                                <line x1={nx - 4} y1={ny + 3} x2={nx + 4} y2={ny + 3} stroke="#6b7280" strokeWidth={1.2} />
+                                <line x1={nx - 2} y1={ny + 6} x2={nx + 2} y2={ny + 6} stroke="#6b7280" strokeWidth={1} />
+                            </g>
+                        )
+                    })}
+
+                    {/* Nodes */}
+                    {nodes.map((node, i) => {
+                        const cx = node.x + offsetX
+                        const cy = node.y + offsetY
+                        const isRoot = node.depth === 0
+                        const state = getNodeState(node.obj.id)
+                        const style = nodeStyle(state, isRoot)
+                        const visitOrder = visitedNodes.get(node.obj.id)
+                        return (
+                            <motion.g
+                                key={node.obj.id}
+                                initial={{ opacity: 0, scale: 0.5 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                transition={{
+                                    type: 'spring', stiffness: 300, damping: 20,
+                                    delay: node.depth * 0.1 + i * 0.03
+                                }}
+                                style={{ transformOrigin: `${cx}px ${cy}px` }}
+                            >
+                                {/* Pulsing glow for active node */}
+                                {state === 'active' && (
+                                    <circle
+                                        cx={cx} cy={cy} r={nodeRadius + 6}
+                                        fill="none"
+                                        stroke="#f59e0b"
+                                        strokeWidth={2}
+                                        className="tree-pulse"
+                                    />
+                                )}
+                                {/* Static glow for path/root */}
+                                {style.glowColor && state !== 'active' && (
+                                    <circle
+                                        cx={cx} cy={cy} r={nodeRadius + 4}
+                                        fill="none"
+                                        stroke={style.glowColor}
+                                        strokeWidth={1}
+                                        opacity={0.4}
+                                    />
+                                )}
+                                {/* Node circle */}
+                                <circle
+                                    cx={cx} cy={cy} r={nodeRadius}
+                                    fill={style.fill}
+                                    stroke={style.stroke}
+                                    strokeWidth={style.strokeWidth}
+                                    style={{ transition: 'fill 0.3s, stroke 0.3s' }}
+                                />
+                                {/* Value text */}
+                                <text
+                                    x={cx} y={cy}
+                                    textAnchor="middle"
+                                    dominantBaseline="central"
+                                    fill={style.textFill}
+                                    fontSize={node.value.length > 3 ? 10 : 13}
+                                    fontFamily="monospace"
+                                    fontWeight="bold"
+                                >
+                                    {node.value.length > 6 ? node.value.slice(0, 5) + '…' : node.value}
+                                </text>
+                                {/* Visit order badge */}
+                                {visitOrder !== undefined && (
+                                    <>
+                                        <circle
+                                            cx={cx + nodeRadius - 2}
+                                            cy={cy - nodeRadius + 2}
+                                            r={8}
+                                            fill={state === 'active' ? '#f59e0b' : '#10b981'}
+                                            stroke="#1e1e2e"
+                                            strokeWidth={1.5}
+                                        />
+                                        <text
+                                            x={cx + nodeRadius - 2}
+                                            y={cy - nodeRadius + 2}
+                                            textAnchor="middle"
+                                            dominantBaseline="central"
+                                            fill="#fff"
+                                            fontSize={8}
+                                            fontFamily="monospace"
+                                            fontWeight="bold"
+                                        >
+                                            {visitOrder}
+                                        </text>
+                                    </>
+                                )}
+                                {/* Depth label (only when not traversing) */}
+                                {!isTraversing && (
+                                    <text
+                                        x={cx + nodeRadius + 4}
+                                        y={cy - nodeRadius + 4}
+                                        fill="#6b7280"
+                                        fontSize={9}
+                                        fontFamily="monospace"
+                                    >
+                                        d{node.depth}
+                                    </text>
+                                )}
+                            </motion.g>
+                        )
+                    })}
+                </svg>
+            </div>
+
+            {/* Traversal trail */}
+            {isTraversing && visitTrail.length > 0 && (
+                <div className="mt-3 p-2.5 rounded-lg bg-dark-bg border border-emerald-500/10">
+                    <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider">Traversal Order</span>
+                        <span className="text-[10px] text-dark-muted">({visitedNodes.size} of {nodes.length})</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1">
+                        {visitTrail.map((val, i) => {
+                            const isLast = i === visitTrail.length - 1 && activeNodeId !== null
+                            return (
+                                <React.Fragment key={i}>
+                                    <span className={`px-1.5 py-0.5 rounded text-xs font-mono font-bold ${isLast
+                                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                        : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                        }`}>
+                                        {val}
+                                    </span>
+                                    {i < visitTrail.length - 1 && (
+                                        <span className="text-dark-muted text-[10px]">→</span>
+                                    )}
+                                </React.Fragment>
+                            )
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* Stats footer */}
+            <div className="mt-3 text-[10px] text-dark-muted flex items-center gap-3">
+                <span>{nodes.length} node{nodes.length !== 1 ? 's' : ''}</span>
+                <span>•</span>
+                <span>Depth: {totalDepth}</span>
+                <span>•</span>
+                <span>Type: {root.className}</span>
             </div>
         </div>
     )

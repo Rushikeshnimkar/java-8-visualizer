@@ -3,25 +3,25 @@
 // ============================================
 
 export interface SampleProgram {
-  name: string
-  description: string
-  code: string
+    name: string
+    description: string
+    code: string
 }
 
 export const SAMPLE_PROGRAMS: SampleProgram[] = [
-  {
-    name: 'Hello World',
-    description: 'Basic print statement',
-    code: `public class HelloWorld {
+    {
+        name: 'Hello World',
+        description: 'Basic print statement',
+        code: `public class HelloWorld {
     public static void main(String[] args) {
         System.out.println("Hello, World!");
     }
 }`,
-  },
-  {
-    name: 'Variables & Arithmetic',
-    description: 'Variable declaration and math operations',
-    code: `public class Calculator {
+    },
+    {
+        name: 'Variables & Arithmetic',
+        description: 'Variable declaration and math operations',
+        code: `public class Calculator {
     public static void main(String[] args) {
         int a = 10;
         int b = 5;
@@ -36,11 +36,11 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         System.out.println(quotient);
     }
 }`,
-  },
-  {
-    name: 'Method Calls',
-    description: 'Static method invocation',
-    code: `public class Methods {
+    },
+    {
+        name: 'Method Calls',
+        description: 'Static method invocation',
+        code: `public class Methods {
     public static void main(String[] args) {
         int result = add(5, 3);
         System.out.println(result);
@@ -57,11 +57,11 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         return x * y;
     }
 }`,
-  },
-  {
-    name: 'Control Flow',
-    description: 'If-else and loops',
-    code: `public class ControlFlow {
+    },
+    {
+        name: 'Control Flow',
+        description: 'If-else and loops',
+        code: `public class ControlFlow {
     public static void main(String[] args) {
         int x = 10;
         
@@ -78,11 +78,11 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         }
     }
 }`,
-  },
-  {
-    name: 'Objects & Classes',
-    description: 'Object creation and field access',
-    code: `public class Person {
+    },
+    {
+        name: 'Objects & Classes',
+        description: 'Object creation and field access',
+        code: `public class Person {
     String name;
     int age;
     
@@ -95,11 +95,11 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         System.out.println(p.age);
     }
 }`,
-  },
-  {
-    name: 'Arrays',
-    description: 'Array creation and manipulation',
-    code: `public class Arrays {
+    },
+    {
+        name: 'Arrays',
+        description: 'Array creation and manipulation',
+        code: `public class Arrays {
     public static void main(String[] args) {
         int[] numbers = new int[5];
         numbers[0] = 10;
@@ -116,11 +116,11 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         System.out.println(sum);
     }
 }`,
-  },
-  {
-    name: 'Lambda Expression',
-    description: 'Java 8 lambda syntax',
-    code: `public class Lambda {
+    },
+    {
+        name: 'Lambda Expression',
+        description: 'Java 8 lambda syntax',
+        code: `public class Lambda {
     public static void main(String[] args) {
         int x = 5;
         int y = 10;
@@ -133,11 +133,11 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         // for educational visualization
     }
 }`,
-  },
-  {
-    name: 'Factorial (Recursion)',
-    description: 'Recursive method calls',
-    code: `public class Factorial {
+    },
+    {
+        name: 'Factorial (Recursion)',
+        description: 'Recursive method calls',
+        code: `public class Factorial {
     public static void main(String[] args) {
         int n = 5;
         int result = factorial(n);
@@ -151,11 +151,11 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         return n * factorial(n - 1);
     }
 }`,
-  },
-  {
-    name: 'For Loop',
-    description: 'Standard for loop iteration',
-    code: `public class ForLoop {
+    },
+    {
+        name: 'For Loop',
+        description: 'Standard for loop iteration',
+        code: `public class ForLoop {
     public static void main(String[] args) {
         int sum = 0;
         
@@ -167,11 +167,11 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         System.out.println(sum);
     }
 }`,
-  },
-  {
-    name: 'Fibonacci',
-    description: 'Calculate Fibonacci numbers',
-    code: `public class Fibonacci {
+    },
+    {
+        name: 'Fibonacci',
+        description: 'Calculate Fibonacci numbers',
+        code: `public class Fibonacci {
     public static void main(String[] args) {
         int n = 8;
         
@@ -191,5 +191,93 @@ export const SAMPLE_PROGRAMS: SampleProgram[] = [
         }
     }
 }`,
-  },
+    },
+    {
+        name: 'Binary Search Tree',
+        description: 'BST with tree node visualization',
+        code: `public class TreeNode {
+    int val;
+    TreeNode left;
+    TreeNode right;
+
+    public static void main(String[] args) {
+        TreeNode root = new TreeNode();
+        root.val = 10;
+
+        TreeNode left = new TreeNode();
+        left.val = 5;
+        root.left = left;
+
+        TreeNode right = new TreeNode();
+        right.val = 15;
+        root.right = right;
+
+        TreeNode ll = new TreeNode();
+        ll.val = 3;
+        left.left = ll;
+
+        TreeNode lr = new TreeNode();
+        lr.val = 7;
+        left.right = lr;
+
+        TreeNode rl = new TreeNode();
+        rl.val = 12;
+        right.left = rl;
+
+        TreeNode rr = new TreeNode();
+        rr.val = 20;
+        right.right = rr;
+
+        System.out.println(root.val);
+        System.out.println(left.val);
+        System.out.println(right.val);
+    }
+}`,
+    },
+    {
+        name: 'DFS Preorder Traversal',
+        description: 'Visualize DFS traversal on a binary tree',
+        code: `public class TreeNode {
+    int val;
+    TreeNode left;
+    TreeNode right;
+
+    public static void dfs(TreeNode node) {
+        if (node == null) {
+            return;
+        }
+        System.out.println(node.val);
+        dfs(node.left);
+        dfs(node.right);
+    }
+
+    public static void main(String[] args) {
+        TreeNode root = new TreeNode();
+        root.val = 1;
+
+        TreeNode n2 = new TreeNode();
+        n2.val = 2;
+        root.left = n2;
+
+        TreeNode n3 = new TreeNode();
+        n3.val = 3;
+        root.right = n3;
+
+        TreeNode n4 = new TreeNode();
+        n4.val = 4;
+        n2.left = n4;
+
+        TreeNode n5 = new TreeNode();
+        n5.val = 5;
+        n2.right = n5;
+
+        TreeNode n6 = new TreeNode();
+        n6.val = 6;
+        n3.right = n6;
+
+        System.out.println("DFS Preorder:");
+        dfs(root);
+    }
+}`,
+    },
 ]
