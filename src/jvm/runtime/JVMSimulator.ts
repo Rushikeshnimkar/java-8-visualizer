@@ -1090,7 +1090,7 @@ export class JVMSimulator {
         const arrRef = args[0] as import('../types/JVMState').ReferenceValue
         const arrObj = this.getHeapObj(arrRef)
         let str = 'null'
-        if (arrObj && arrObj.className.startsWith('[')) {
+        if (arrObj && arrObj.type === 'array') {
           str = '[' + (arrObj.arrayElements || []).map(e => this.valToString(e)).join(', ') + ']'
         }
         frame.operandStack.push(createPrimitiveValue('string', str))
