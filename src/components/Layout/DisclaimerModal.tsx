@@ -29,8 +29,8 @@ export function DisclaimerModal() {
                     >
                         {/* Header */}
                         <div className="flex items-center gap-3 p-5 border-b border-dark-border bg-dark-bg/50">
-                            <div className="w-12 h-12 bg-gradient-to-br from-jvm-stack via-jvm-heap to-jvm-method rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
-                                <span className="text-white font-bold text-xl">JV</span>
+                            <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0 overflow-hidden bg-white/5">
+                                <img src="/logo.png" alt="Java Visualizer Logo" className="w-full h-full object-cover" />
                             </div>
                             <div>
                                 <h2 className="text-xl font-bold text-dark-text">Welcome to Java 8 Visualizer</h2>

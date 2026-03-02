@@ -86,8 +86,8 @@ export function MainLayout() {
       {/* Header */}
       <header className="flex-shrink-0 h-14 bg-dark-card border-b border-dark-border flex items-center px-4 gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-jvm-stack via-jvm-heap to-jvm-method rounded-xl flex items-center justify-center shadow-lg">
-            <span className="text-white font-bold text-lg">JV</span>
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg overflow-hidden bg-white/5">
+            <img src="/logo.png" alt="Java Visualizer Logo" className="w-full h-full object-cover" />
           </div>
           <div>
             <h1 className="text-lg font-bold leading-tight">Java 8 Visualizer</h1>

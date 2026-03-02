@@ -842,6 +842,64 @@ export class BytecodeCompiler {
   }
 
   private compileMemberExpression(expr: AST.MemberExpression, ctx: CompilerContext): void {
+    // Handle well-known Java static constants — emit LOAD_CONST instead of GETFIELD
+    if (expr.object.kind === 'IdentifierExpression') {
+      const className = expr.object.name
+      const prop = expr.property
+      // Integer / Long static constants
+      if (className === 'Integer' || className === 'Long') {
+        if (prop === 'MIN_VALUE') {
+          const val = className === 'Integer' ? -2147483648 : -9007199254740991
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(val)], expr.location.line))
+          return
+        }
+        if (prop === 'MAX_VALUE') {
+          const val = className === 'Integer' ? 2147483647 : 9007199254740991
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(val)], expr.location.line))
+          return
+        }
+        if (prop === 'SIZE') {
+          const val = className === 'Integer' ? 32 : 64
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(val)], expr.location.line))
+          return
+        }
+      }
+      // Double / Float static constants
+      if (className === 'Double' || className === 'Float') {
+        if (prop === 'MIN_VALUE') {
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'float', value: className === 'Double' ? 5e-324 : 1.4e-45 }], expr.location.line))
+          return
+        }
+        if (prop === 'MAX_VALUE') {
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'float', value: className === 'Double' ? 1.7976931348623157e+308 : 3.4028235e+38 }], expr.location.line))
+          return
+        }
+        if (prop === 'POSITIVE_INFINITY') {
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'float', value: Infinity }], expr.location.line))
+          return
+        }
+        if (prop === 'NEGATIVE_INFINITY') {
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'float', value: -Infinity }], expr.location.line))
+          return
+        }
+        if (prop === 'NaN') {
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'float', value: NaN }], expr.location.line))
+          return
+        }
+      }
+      // Math constants (field access form, e.g. Math.PI when used as a value)
+      if (className === 'Math') {
+        if (prop === 'PI') {
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'float', value: Math.PI }], expr.location.line))
+          return
+        }
+        if (prop === 'E') {
+          ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'float', value: Math.E }], expr.location.line))
+          return
+        }
+      }
+    }
+
     this.compileExpression(expr.object, ctx)
     ctx.instructions.push(createInstruction(OpCode.GETFIELD, [fieldOperand(expr.property, '')], expr.location.line))
   }
