@@ -2,7 +2,7 @@
 // Enhanced Main Layout with Better Visualization
 // ============================================
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CodeInput } from '../CodeEditor/CodeInput'
 import { ControlPanel } from '../CodeEditor/ControlPanel'
@@ -10,13 +10,13 @@ import { JVMStack } from '../Visualizations/JVMStack'
 import { HeapView } from '../Visualizations/HeapView'
 import { MethodArea } from '../Visualizations/MethodArea'
 import { ProgramCounter } from '../Visualizations/ProgramCounter'
-import { OutputConsole, DataStructuresView } from '../Visualizations'
+import { OutputConsole, DataStructuresView, InheritanceView } from '../Visualizations'
 import { VariableHistory, AllVariablesPanel } from '../Visualizations/VariableHistory'
 import ThreadsView from '../Visualizations/ThreadsView'
 import { DisclaimerModal } from './DisclaimerModal'
 import { useExecutionStore } from '../../state/executionStore'
 
-type VisualizationTab = 'data-structures' | 'stack' | 'heap' | 'variables' | 'history' | 'threads'
+type VisualizationTab = 'data-structures' | 'stack' | 'heap' | 'variables' | 'history' | 'threads' | 'inheritance'
 type BottomTab = 'output' | 'method-area' | 'pc'
 
 export function MainLayout() {
@@ -25,6 +25,20 @@ export function MainLayout() {
   const [activeTab, setActiveTab] = useState<VisualizationTab>('data-structures')
   const [bottomTab, setBottomTab] = useState<BottomTab>('output')
   const { compilationError, jvmState } = useExecutionStore()
+
+  const hasInheritance = Object.keys(jvmState.methodArea.loadedClasses).some(className => {
+    const cls = jvmState.methodArea.loadedClasses[className]
+    const hasParent = cls.superClass && cls.superClass !== 'Object' && jvmState.methodArea.loadedClasses[cls.superClass]
+    const hasInterface = cls.interfaces?.some(i => jvmState.methodArea.loadedClasses[i])
+    return hasParent || hasInterface || cls.isInterface || cls.isAbstract
+  })
+
+  // Ensure active tab doesn't get stuck on hidden inheritance tab
+  useEffect(() => {
+    if (activeTab === 'inheritance' && !hasInheritance) {
+      setActiveTab('data-structures')
+    }
+  }, [hasInheritance, activeTab])
 
   const tabs: { id: VisualizationTab; label: string; icon: JSX.Element; badge?: number }[] = [
     {
@@ -61,6 +75,14 @@ export function MainLayout() {
       badge: jvmState.threads.filter(t => t.status !== 'TERMINATED').length,
     },
   ]
+
+  if (hasInheritance) {
+    tabs.push({
+      id: 'inheritance' as VisualizationTab,
+      label: 'Inheritance',
+      icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l9-3 9 3M3 6v12l9 3 9-3V6M12 3v18" /></svg>,
+    })
+  }
 
   const bottomTabs: { id: BottomTab; label: string; icon: JSX.Element }[] = [
     {
@@ -155,12 +177,12 @@ export function MainLayout() {
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Visualization Tabs */}
           <div className="flex-shrink-0 bg-dark-card border-b border-dark-border">
-            <div className="flex items-center px-2">
+            <div className="flex items-center px-2 overflow-x-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 ${activeTab === tab.id
+                  className={`flex items-center gap-2 px-3 py-2.5 text-sm font-medium transition-all border-b-2 whitespace-nowrap flex-shrink-0 ${activeTab === tab.id
                     ? 'text-dark-accent border-dark-accent bg-dark-accent/5'
                     : 'text-dark-muted border-transparent hover:text-dark-text hover:bg-dark-border/30'
                     }`}
@@ -245,6 +267,17 @@ export function MainLayout() {
                   className="h-full overflow-auto"
                 >
                   <ThreadsView />
+                </motion.div>
+              )}
+              {activeTab === 'inheritance' && (
+                <motion.div
+                  key="inheritance"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  className="h-full"
+                >
+                  <InheritanceView />
                 </motion.div>
               )}
             </AnimatePresence>

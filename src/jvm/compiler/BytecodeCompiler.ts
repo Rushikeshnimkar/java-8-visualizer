@@ -25,6 +25,8 @@ import {
 interface CompilerContext {
   className: string
   methodName: string
+  parentClass: string   // superclass name ('' if none)
+  instanceFields: Set<string>  // instance field names (own + inherited)
   localVariables: Map<string, { index: number; type: string }>
   nextLocalIndex: number
   instructions: Instruction[]
@@ -73,20 +75,38 @@ export class BytecodeCompiler {
   private compileClass(node: AST.ClassDeclaration): void {
     const fields: CompiledField[] = []
     const methods: CompiledMethod[] = []
+    const parentClass = node.superClass || 'Object'
+
+    // Collect all instance field names for this class (own + inherited across all already-compiled classes)
+    const instanceFields = new Set<string>()
+    // walk up the class hierarchy to gather inherited fields
+    const gatherFields = (className: string) => {
+      const cls = this.classes.find(c => c.name === className)
+      if (!cls) return
+      for (const f of cls.fields) { if (!f.isStatic) instanceFields.add(f.name) }
+      if (cls.superClass && cls.superClass !== 'Object') gatherFields(cls.superClass)
+    }
+    gatherFields(parentClass)
+    // also add own fields (parsed from this node)
+    for (const member of node.members) {
+      if (member.kind === 'FieldDeclaration' && !member.modifiers.includes('static')) {
+        instanceFields.add(member.name)
+      }
+    }
 
     for (const member of node.members) {
       if (member.kind === 'FieldDeclaration') {
         fields.push(this.compileField(member))
       } else if (member.kind === 'MethodDeclaration') {
-        methods.push(this.compileMethod(member, node.name))
+        methods.push(this.compileMethod(member, node.name, parentClass, instanceFields))
       } else if (member.kind === 'ConstructorDeclaration') {
-        methods.push(this.compileConstructor(member, node.name))
+        methods.push(this.compileConstructor(member, node.name, parentClass, instanceFields))
       }
     }
 
     this.classes.push({
       name: node.name,
-      superClass: node.superClass || 'Object',
+      superClass: parentClass,
       interfaces: node.interfaces,
       fields,
       methods,
@@ -104,6 +124,18 @@ export class BytecodeCompiler {
         fields.push(this.compileField(member))
       } else if (member.kind === 'DefaultMethodDeclaration') {
         methods.push(this.compileDefaultMethod(member, node.name))
+      } else if (member.kind === 'MethodSignature') {
+        // Abstract interface method — store as a stub so it shows in the class data
+        const signature = this.buildMethodSignature(member.name, member.parameters, member.returnType)
+        methods.push({
+          className: node.name,
+          methodName: member.name,
+          signature,
+          instructions: [],
+          localVariableTable: [],
+          maxStack: 0,
+          maxLocals: 0,
+        })
       }
     }
 
@@ -137,10 +169,12 @@ export class BytecodeCompiler {
     return undefined
   }
 
-  private createContext(className: string, methodName: string): CompilerContext {
+  private createContext(className: string, methodName: string, parentClass = '', instanceFields = new Set<string>()): CompilerContext {
     return {
       className,
       methodName,
+      parentClass,
+      instanceFields,
       localVariables: new Map(),
       nextLocalIndex: 0,
       instructions: [],
@@ -151,8 +185,8 @@ export class BytecodeCompiler {
     }
   }
 
-  private compileMethod(node: AST.MethodDeclaration, className: string): CompiledMethod {
-    const ctx = this.createContext(className, node.name)
+  private compileMethod(node: AST.MethodDeclaration, className: string, parentClass = '', instanceFields = new Set<string>()): CompiledMethod {
+    const ctx = this.createContext(className, node.name, parentClass, instanceFields)
     const signature = this.buildMethodSignature(node.name, node.parameters, node.returnType)
 
     // Record method offset
@@ -209,8 +243,8 @@ export class BytecodeCompiler {
     }
   }
 
-  private compileConstructor(node: AST.ConstructorDeclaration, className: string): CompiledMethod {
-    const ctx = this.createContext(className, '<init>')
+  private compileConstructor(node: AST.ConstructorDeclaration, className: string, parentClass = '', instanceFields = new Set<string>()): CompiledMethod {
+    const ctx = this.createContext(className, '<init>', parentClass, instanceFields)
     const signature = this.buildMethodSignature('<init>', node.parameters, { kind: 'TypeNode', name: 'void', isArray: false, arrayDimensions: 0, typeArguments: [], location: node.location })
 
     // Record method offset
@@ -618,6 +652,10 @@ export class BytecodeCompiler {
       case 'ConditionalExpression':
         this.compileConditionalExpression(expr, ctx)
         break
+      case 'SuperExpression':
+        // super refers to the same 'this' object; load local slot 0
+        ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+        break
       case 'ParenthesizedExpression':
         this.compileExpression(expr.expression, ctx)
         break
@@ -661,6 +699,10 @@ export class BytecodeCompiler {
     const local = ctx.localVariables.get(expr.name)
     if (local) {
       ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(local.index, expr.name)], expr.location.line))
+    } else if (ctx.instanceFields.has(expr.name)) {
+      // It's an instance field — compile as this.field
+      ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+      ctx.instructions.push(createInstruction(OpCode.GETFIELD, [fieldOperand(expr.name, ctx.className)], expr.location.line))
     } else {
       // Assume it's a static field or class reference
       ctx.instructions.push(createInstruction(OpCode.GETSTATIC, [fieldOperand(expr.name, ctx.className)], expr.location.line))
@@ -698,12 +740,13 @@ export class BytecodeCompiler {
       // Handle increment/decrement
       if (expr.operand.kind === 'IdentifierExpression') {
         const local = ctx.localVariables.get(expr.operand.name)
+        const opcode = expr.operator === '++' ? OpCode.ADD : OpCode.SUB
         if (local) {
           if (expr.prefix) {
             // ++x: increment first, then load
             ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(local.index, expr.operand.name)], expr.location.line))
             ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(1)], expr.location.line))
-            ctx.instructions.push(createInstruction(expr.operator === '++' ? OpCode.ADD : OpCode.SUB, [], expr.location.line))
+            ctx.instructions.push(createInstruction(opcode, [], expr.location.line))
             ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
             ctx.instructions.push(createInstruction(OpCode.STORE_LOCAL, [localOperand(local.index, expr.operand.name)], expr.location.line))
           } else {
@@ -711,10 +754,74 @@ export class BytecodeCompiler {
             ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(local.index, expr.operand.name)], expr.location.line))
             ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
             ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(1)], expr.location.line))
-            ctx.instructions.push(createInstruction(expr.operator === '++' ? OpCode.ADD : OpCode.SUB, [], expr.location.line))
+            ctx.instructions.push(createInstruction(opcode, [], expr.location.line))
             ctx.instructions.push(createInstruction(OpCode.STORE_LOCAL, [localOperand(local.index, expr.operand.name)], expr.location.line))
           }
+        } else if (ctx.instanceFields.has(expr.operand.name)) {
+          // Instance field: this.field++ or ++this.field
+          const name = expr.operand.name
+          if (expr.prefix) {
+            ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.GETFIELD, [fieldOperand(name, ctx.className)], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(1)], expr.location.line))
+            ctx.instructions.push(createInstruction(opcode, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.DUP_X1, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.PUTFIELD, [fieldOperand(name, ctx.className)], expr.location.line))
+          } else {
+            ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.GETFIELD, [fieldOperand(name, ctx.className)], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.SWAP, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(1)], expr.location.line))
+            ctx.instructions.push(createInstruction(opcode, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.PUTFIELD, [fieldOperand(name, ctx.className)], expr.location.line))
+          }
+        } else {
+          // Static field: count++ or ++count
+          const name = expr.operand.name
+          if (expr.prefix) {
+            ctx.instructions.push(createInstruction(OpCode.GETSTATIC, [fieldOperand(name, ctx.className)], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(1)], expr.location.line))
+            ctx.instructions.push(createInstruction(opcode, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.PUTSTATIC, [fieldOperand(name, ctx.className)], expr.location.line))
+          } else {
+            ctx.instructions.push(createInstruction(OpCode.GETSTATIC, [fieldOperand(name, ctx.className)], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(1)], expr.location.line))
+            ctx.instructions.push(createInstruction(opcode, [], expr.location.line))
+            ctx.instructions.push(createInstruction(OpCode.PUTSTATIC, [fieldOperand(name, ctx.className)], expr.location.line))
+          }
         }
+      } else if (expr.operand.kind === 'MemberExpression') {
+        // obj.field++ — load obj, getfield, increment, putfield
+        const field = expr.operand
+        const name = field.property
+        const opcode = expr.operator === '++' ? OpCode.ADD : OpCode.SUB
+        this.compileExpression(field.object, ctx)
+        ctx.instructions.push(createInstruction(OpCode.GETFIELD, [fieldOperand(name, '')], expr.location.line))
+        ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
+        this.compileExpression(field.object, ctx)
+        ctx.instructions.push(createInstruction(OpCode.SWAP, [], expr.location.line))
+        ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(1)], expr.location.line))
+        ctx.instructions.push(createInstruction(opcode, [], expr.location.line))
+        ctx.instructions.push(createInstruction(OpCode.PUTFIELD, [fieldOperand(name, '')], expr.location.line))
+      } else if (expr.operand.kind === 'ArrayAccessExpression') {
+        // arr[i]++ — compile array access ++ 
+        const aa = expr.operand
+        this.compileExpression(aa.array, ctx)
+        this.compileExpression(aa.index, ctx)
+        ctx.instructions.push(createInstruction(OpCode.ARRAYLOAD, [], expr.location.line))
+        ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
+        ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [intOperand(1)], expr.location.line))
+        const opcode2 = expr.operator === '++' ? OpCode.ADD : OpCode.SUB
+        ctx.instructions.push(createInstruction(opcode2, [], expr.location.line))
+        this.compileExpression(aa.array, ctx)
+        this.compileExpression(aa.index, ctx)
+        ctx.instructions.push(createInstruction(OpCode.SWAP, [], expr.location.line))
+        ctx.instructions.push(createInstruction(OpCode.ARRAYSTORE, [], expr.location.line))
       }
     } else {
       this.compileExpression(expr.operand, ctx)
@@ -742,8 +849,8 @@ export class BytecodeCompiler {
         }
         ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
         ctx.instructions.push(createInstruction(OpCode.STORE_LOCAL, [localOperand(local.index, expr.left.name)], expr.location.line))
-      } else {
-        // Fallback: assume it's an implicit 'this' field assignment
+      } else if (ctx.instanceFields.has(expr.left.name)) {
+        // Instance field assignment: this.field = value
         ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
         if (expr.operator === '=') {
           this.compileExpression(expr.right, ctx)
@@ -757,6 +864,19 @@ export class BytecodeCompiler {
         }
         ctx.instructions.push(createInstruction(OpCode.DUP_X1, [], expr.location.line))
         ctx.instructions.push(createInstruction(OpCode.PUTFIELD, [fieldOperand(expr.left.name, '')], expr.location.line))
+      } else {
+        // Static field assignment: ClassName.field = value or bare field = value in static context
+        if (expr.operator === '=') {
+          this.compileExpression(expr.right, ctx)
+        } else {
+          ctx.instructions.push(createInstruction(OpCode.GETSTATIC, [fieldOperand(expr.left.name, ctx.className)], expr.location.line))
+          this.compileExpression(expr.right, ctx)
+          const op = expr.operator.slice(0, -1)
+          const opMap: Record<string, OpCode> = { '+': OpCode.ADD, '-': OpCode.SUB, '*': OpCode.MUL, '/': OpCode.DIV }
+          ctx.instructions.push(createInstruction(opMap[op], [], expr.location.line))
+        }
+        ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
+        ctx.instructions.push(createInstruction(OpCode.PUTSTATIC, [fieldOperand(expr.left.name, ctx.className)], expr.location.line))
       }
     } else if (expr.left.kind === 'MemberExpression') {
       // Field assignment
@@ -803,22 +923,46 @@ export class BytecodeCompiler {
         }
       }
 
-      // Detect static utility class calls: Math.max, Integer.parseInt, etc.
-      const STATIC_CLASSES = new Set(['Math', 'Integer', 'Long', 'Double', 'Float', 'Character', 'String', 'Collections', 'Arrays', 'System', 'Objects', 'Boolean', 'Byte', 'Short'])
-      if (member.object.kind === 'IdentifierExpression' && STATIC_CLASSES.has(member.object.name)) {
-        // Static utility class: emit INVOKE_STATIC with the class name
+      // Handle super.method(...) — dispatch to parent class
+      if (member.object.kind === 'SuperExpression') {
+        // Load 'this' as the receiver
+        ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
         for (const arg of expr.arguments) {
           this.compileExpression(arg, ctx)
         }
+        const parentCls = ctx.parentClass || 'Object'
         ctx.instructions.push(createInstruction(
-          OpCode.INVOKE_STATIC,
-          [methodOperand(member.property, `(${expr.arguments.length})`), classOperand(member.object.name)],
+          OpCode.INVOKE_SPECIAL,
+          [methodOperand(member.property, `(${expr.arguments.length})`), classOperand(parentCls)],
           expr.location.line
         ))
         return
       }
 
-      // Method call on object
+      // Detect static utility class calls: Math.max, Integer.parseInt, etc.
+      const STATIC_CLASSES = new Set(['Math', 'Integer', 'Long', 'Double', 'Float', 'Character', 'String', 'Collections', 'Arrays', 'System', 'Objects', 'Boolean', 'Byte', 'Short'])
+      if (member.object.kind === 'IdentifierExpression') {
+        const objName = member.object.name
+        // Check if it's a known class name (built-in stdlib or user-defined without a local variable of that name)
+        const isBuiltinStaticClass = STATIC_CLASSES.has(objName)
+        // Also check if it's the current class being compiled (not yet in this.classes) or already-compiled classes
+        const isSelfClass = objName === ctx.className
+        const isOtherUserClass = !isBuiltinStaticClass && !isSelfClass && this.classes.some(c => c.name === objName) && !ctx.localVariables.has(objName)
+        if (isBuiltinStaticClass || isSelfClass || isOtherUserClass) {
+          // Static call: ClassName.method(args)
+          for (const arg of expr.arguments) {
+            this.compileExpression(arg, ctx)
+          }
+          ctx.instructions.push(createInstruction(
+            OpCode.INVOKE_STATIC,
+            [methodOperand(member.property, `(${expr.arguments.length})`), classOperand(objName)],
+            expr.location.line
+          ))
+          return
+        }
+      }
+
+      // Method call on object (virtual dispatch)
       this.compileExpression(member.object, ctx)
       for (const arg of expr.arguments) {
         this.compileExpression(arg, ctx)
@@ -828,16 +972,47 @@ export class BytecodeCompiler {
         [methodOperand(member.property, `(${expr.arguments.length})`)],
         expr.location.line
       ))
-    } else if (expr.callee.kind === 'IdentifierExpression') {
-      // Static method call or local method
+    } else if (expr.callee.kind === 'SuperExpression') {
+      // super(args) — constructor chaining to parent class
+      // Load 'this' first
+      ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
       for (const arg of expr.arguments) {
         this.compileExpression(arg, ctx)
       }
+      const parentCls = ctx.parentClass || 'Object'
       ctx.instructions.push(createInstruction(
-        OpCode.INVOKE_STATIC,
-        [methodOperand(expr.callee.name, `(${expr.arguments.length})`), classOperand(ctx.className)],
+        OpCode.INVOKE_SPECIAL,
+        [methodOperand('<init>', `(${expr.arguments.length})`), classOperand(parentCls)],
         expr.location.line
       ))
+    } else if (expr.callee.kind === 'IdentifierExpression') {
+      // Bare method call: area(), increment(), foo(args), etc.
+      // In a non-static method, 'this' is at slot 0 — emit INVOKE_VIRTUAL (this receiver first)
+      const hasThis = ctx.localVariables.has('this') || ctx.methodName === '<init>'
+      const methodName = expr.callee.name
+
+      if (hasThis) {
+        // Instance method context: 'this' is the receiver
+        ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(0, 'this')], expr.location.line))
+        for (const arg of expr.arguments) {
+          this.compileExpression(arg, ctx)
+        }
+        ctx.instructions.push(createInstruction(
+          OpCode.INVOKE_VIRTUAL,
+          [methodOperand(methodName, `(${expr.arguments.length})`)],
+          expr.location.line
+        ))
+      } else {
+        // Static context — pure static method call on this class
+        for (const arg of expr.arguments) {
+          this.compileExpression(arg, ctx)
+        }
+        ctx.instructions.push(createInstruction(
+          OpCode.INVOKE_STATIC,
+          [methodOperand(methodName, `(${expr.arguments.length})`), classOperand(ctx.className)],
+          expr.location.line
+        ))
+      }
     }
   }
 

@@ -587,11 +587,12 @@ export class JVMSimulator {
         const fieldOp = instr.operands[0] as { type: 'field'; value: string; owner: string }
         const className = fieldOp.owner || frame.className
         const staticFields = this.state.methodArea.staticFields[className]
-        if (staticFields && staticFields[fieldOp.value]) {
+        if (staticFields && fieldOp.value in staticFields) {
           frame.operandStack.push(staticFields[fieldOp.value])
-          description = `Get static ${className}.${fieldOp.value}`
+          description = `Get static ${className}.${fieldOp.value} = ${valueToString(staticFields[fieldOp.value])}`
         } else {
           frame.operandStack.push(createNullValue())
+          description = `Get static ${className}.${fieldOp.value} (not found)`
         }
         frame.pc++
         break
@@ -661,8 +662,43 @@ export class JVMSimulator {
           (a?.kind === 'primitive' && a.type === 'string') ||
           (b?.kind === 'primitive' && b.type === 'string')
         )) {
-          const aStr = a ? (a.kind === 'primitive' ? String(a.value ?? 'null') : (a.kind === 'reference' ? (a.objectId ? ('ref@' + a.objectId) : 'null') : valueToString(a))) : 'null'
-          const bStr = b ? (b.kind === 'primitive' ? String(b.value ?? 'null') : (b.kind === 'reference' ? (b.objectId ? ('ref@' + b.objectId) : 'null') : valueToString(b))) : 'null'
+          const resolveToStr = (v: typeof a): string => {
+            if (!v) return 'null'
+            if (v.kind === 'primitive') return String(v.value ?? 'null')
+            if (v.kind === 'reference' && v.objectId) {
+              const ho = this.state.heap.find(o => o.id === v.objectId)
+              if (ho) {
+                const cn = ho.className
+                if (cn === 'HashSet' || cn === 'LinkedHashSet' || cn === 'TreeSet' || cn === 'Set' ||
+                  cn === 'ArrayList' || cn === 'LinkedList' || cn === 'Stack' || cn === 'Vector' || cn === 'List' || cn === 'ArrayDeque') {
+                  return '[' + (ho.arrayElements || []).map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
+                }
+                if (cn === 'HashMap' || cn === 'LinkedHashMap' || cn === 'TreeMap' || cn === 'Map') {
+                  const pairs = (ho.arrayElements || []).map(ev => {
+                    if (ev.kind === 'reference' && ev.objectId) {
+                      const eo = this.state.heap.find(o => o.id === ev.objectId)
+                      if (eo) {
+                        const ks = eo.fields.find(f => f.name === 'key')?.value
+                        const vs2 = eo.fields.find(f => f.name === 'value')?.value
+                        return `${ks?.kind === 'primitive' ? String(ks.value) : 'null'}=${vs2?.kind === 'primitive' ? String(vs2.value) : 'null'}`
+                      }
+                    }
+                    return 'null'
+                  })
+                  return '{' + pairs.join(', ') + '}'
+                }
+                return `${cn}@${v.objectId}`
+              }
+              return 'null'
+            }
+            if (v.kind === 'array' && v.objectId) {
+              const ao = this.state.heap.find(o => o.id === v.objectId)
+              if (ao?.arrayElements) return '[' + ao.arrayElements.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
+            }
+            return valueToString(v)
+          }
+          const aStr = resolveToStr(a)
+          const bStr = resolveToStr(b)
           frame.operandStack.push(createPrimitiveValue('string', aStr + bStr))
           description = `String concat: "${aStr + bStr}"`
           frame.pc++
@@ -831,7 +867,61 @@ export class JVMSimulator {
         const value = frame.operandStack.pop()
 
         // If it's an empty print/println (like System.out.println()), the compiler pushed an empty string.
-        let outputStr = value ? valueToString(value).replace(/^"|"$/g, '') : 'null'
+        let outputStr = 'null'
+        if (value) {
+          if (value.kind === 'reference' && value.objectId) {
+            // Resolve object reference to readable string
+            const heapObj = this.state.heap.find(o => o.id === value.objectId)
+            if (heapObj) {
+              const cn = heapObj.className
+              if (cn === 'HashSet' || cn === 'LinkedHashSet' || cn === 'TreeSet' || cn === 'Set') {
+                const elems = heapObj.arrayElements || []
+                outputStr = '[' + elems.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
+              } else if (cn === 'ArrayList' || cn === 'LinkedList' || cn === 'Stack' || cn === 'Vector' || cn === 'List' || cn === 'ArrayDeque') {
+                const elems = heapObj.arrayElements || []
+                outputStr = '[' + elems.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
+              } else if (cn === 'HashMap' || cn === 'LinkedHashMap' || cn === 'TreeMap' || cn === 'Map') {
+                const entries = heapObj.arrayElements || []
+                const pairs: string[] = []
+                for (const entryVal of entries) {
+                  if (entryVal.kind === 'reference' && entryVal.objectId) {
+                    const entryObj = this.state.heap.find(o => o.id === entryVal.objectId)
+                    if (entryObj) {
+                      const kf = entryObj.fields.find(f => f.name === 'key')
+                      const vf = entryObj.fields.find(f => f.name === 'value')
+                      const ks = kf?.value.kind === 'primitive' ? String(kf.value.value) : 'null'
+                      const vs = vf?.value.kind === 'primitive' ? String(vf.value.value) : 'null'
+                      pairs.push(`${ks}=${vs}`)
+                    }
+                  }
+                }
+                outputStr = '{' + pairs.join(', ') + '}'
+              } else if (heapObj.fields.length > 0) {
+                // Generic object — try toString field, else show className@id
+                const tsField = heapObj.fields.find(f => f.name === 'toString')
+                if (tsField && tsField.value.kind === 'primitive') {
+                  outputStr = String(tsField.value.value)
+                } else {
+                  outputStr = `${cn}@${value.objectId}`
+                }
+              } else {
+                outputStr = `${cn}@${value.objectId}`
+              }
+            } else {
+              outputStr = valueToString(value).replace(/^"|"$/g, '')
+            }
+          } else if (value.kind === 'array' && value.objectId) {
+            // Format array contents
+            const arrObj = this.state.heap.find(o => o.id === value.objectId)
+            if (arrObj?.arrayElements) {
+              outputStr = '[' + arrObj.arrayElements.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
+            } else {
+              outputStr = valueToString(value).replace(/^"|"$/g, '')
+            }
+          } else {
+            outputStr = valueToString(value).replace(/^"|"$/g, '')
+          }
+        }
 
         if (this.state.output.length === 0) {
           this.state.output.push('')
@@ -1004,14 +1094,25 @@ export class JVMSimulator {
     // --- User-defined method ---
     if (!targetClassName) { frame.pc++; return `Null pointer calling ${methodName}()` }
 
-    let targetClass = this.program.classes.find(c => c.name === targetClassName)
-    let methodNode = targetClass?.methods.find(m => m.methodName === methodName)
+    // For INVOKE_SPECIAL (super calls), use the explicit class operand if present
+    const classOp2 = !isStatic ? (instr.operands[1] as { type: 'class'; value: string } | undefined) : undefined
+    const superDispatchClass = (instr.opcode === OpCode.INVOKE_SPECIAL && classOp2?.value && classOp2.value !== targetClassName)
+      ? classOp2.value : null
+    const resolveStartClass = superDispatchClass || targetClassName
+
+    // Helper: find method by name + arity, falling back to name-only
+    const findMethod = (cls: typeof targetClass, name: string, arity: number) =>
+      cls?.methods.find(m => m.methodName === name && m.localVariableTable.filter(v => v.index >= (isStatic ? 0 : 1) && v.index < (isStatic ? arity : arity + 1)).length === arity)
+      ?? cls?.methods.find(m => m.methodName === name)
+
+    let targetClass = this.program.classes.find(c => c.name === resolveStartClass)
+    let methodNode = findMethod(targetClass, methodName, numArgs)
 
     let currentClassStr = targetClass?.superClass
     while (!methodNode && currentClassStr && currentClassStr !== 'Object') {
       targetClass = this.program.classes.find(c => c.name === currentClassStr)
       if (!targetClass) break
-      methodNode = targetClass.methods.find(m => m.methodName === methodName)
+      methodNode = findMethod(targetClass, methodName, numArgs)
       currentClassStr = targetClass.superClass
     }
 
@@ -1305,6 +1406,11 @@ export class JVMSimulator {
         case 'iterator': { const itId = this.createIterator(obj!); frame.operandStack.push(createReferenceValue(itId)); return `Set.iterator` }
         case 'toArray': { const arrId = this.allocateArray('Object', [...elems]); frame.operandStack.push(createReferenceValue(arrId)); return `Set.toArray` }
         case 'forEach': frame.operandStack.push(createNullValue()); return `Set.forEach [simplified]`
+        case 'toString': {
+          const str = '[' + elems.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
+          frame.operandStack.push(createPrimitiveValue('string', str)); return `Set.toString`
+        }
+        case 'hashCode': frame.operandStack.push(createPrimitiveValue('int', elems.length)); return `Set.hashCode`
       }
     }
 
@@ -1508,6 +1614,31 @@ export class JVMSimulator {
           const ok = b?.arrayElements?.every(e => !setA.has(this.valToString(e))) ?? true
           frame.operandStack.push(createPrimitiveValue('boolean', ok)); return `Collections.disjoint`
         }
+        case 'rotate': {
+          // Collections.rotate(List list, int distance)
+          // Rotates list elements by distance positions (positive = right rotation)
+          const lo = heapOf(args[0])
+          const distance = args[1]?.kind === 'primitive' ? (args[1].value as number) : 0
+          if (lo?.arrayElements && lo.arrayElements.length > 0) {
+            const n = lo.arrayElements.length
+            // Normalize distance to be in range [0, n)
+            const d = ((distance % n) + n) % n
+            if (d !== 0) {
+              // Rotate right by d: last d elements move to front
+              const rotated = [
+                ...lo.arrayElements.slice(n - d),
+                ...lo.arrayElements.slice(0, n - d)
+              ]
+              lo.arrayElements.splice(0, n, ...rotated)
+              lo.arrayLength = n
+            }
+          }
+          frame.operandStack.push(createNullValue()); return `Collections.rotate(${distance})`
+        }
+        case 'reverseOrder': {
+          // Returns a comparator reference (simplified – just return null)
+          frame.operandStack.push(createNullValue()); return `Collections.reverseOrder`
+        }
       }
     }
 
@@ -1566,9 +1697,33 @@ export class JVMSimulator {
           frame.operandStack.push(createPrimitiveValue('string', s)); return `Arrays.deepToString`
         }
         case 'asList': {
-          const elems: Value[] = [...args]
-          const arrId = this.allocateArray('Object', elems)
-          frame.operandStack.push(createReferenceValue(arrId)); return `Arrays.asList`
+          // Arrays.asList(T[] arr) — if called with a single reference that is an array,
+          // unwrap its elements so the returned List reflects the actual array contents.
+          // Also keep the 'backed by array' semantics by sharing the same arrayElements array.
+          let elems: Value[]
+          let backedByArrayId: string | null = null
+          if (args.length === 1 && args[0].kind === 'reference') {
+            const backing = heapOf(args[0])
+            if (backing && backing.type === 'array') {
+              // Share the same arrayElements array so mutations via the list reflect in the original
+              elems = backing.arrayElements || []
+              backedByArrayId = backing.id
+            } else {
+              elems = [...args]
+            }
+          } else {
+            elems = [...args]
+          }
+          const listId = this.generateObjectId()
+          const listObj: import('../types/JVMState').HeapObject = {
+            id: listId, type: 'array', className: 'ArrayList',
+            fields: [], arrayElements: elems, arrayLength: elems.length,
+            isReachable: true, gcRoot: false,
+            createdAtStep: this.state.stepNumber,
+            references: backedByArrayId ? [backedByArrayId] : [],
+          }
+          this.state.heap.push(listObj)
+          frame.operandStack.push(createReferenceValue(listId)); return `Arrays.asList (${elems.length} elements)`
         }
         case 'binarySearch': {
           const arrObj = heapOf(args[0])
