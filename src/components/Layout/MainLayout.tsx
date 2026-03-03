@@ -15,6 +15,7 @@ import { OutputConsole, DataStructuresView, InheritanceView } from '../Visualiza
 import { VariableHistory, AllVariablesPanel } from '../Visualizations/VariableHistory'
 import ThreadsView from '../Visualizations/ThreadsView'
 import { DisclaimerModal } from './DisclaimerModal'
+import { Notepad } from './Notepad'
 import { useExecutionStore } from '../../state/executionStore'
 import { formatJavaCode } from '../../utils/javaFormatter'
 
@@ -27,6 +28,7 @@ export function MainLayout() {
   const [activeTab, setActiveTab] = useState<VisualizationTab>('data-structures')
   const [bottomTab, setBottomTab] = useState<BottomTab>('output')
   const [formatDone, setFormatDone] = useState(false)
+  const [isNotepadOpen, setIsNotepadOpen] = useState(false)
   const { compilationError, jvmState, sourceCode, setSourceCode } = useExecutionStore()
 
   const handleFormat = () => {
@@ -430,7 +432,7 @@ export function MainLayout() {
 
         <div className="flex-1" />
 
-        <div className="flex items-center gap-2 text-dark-muted">
+        <div className="flex items-center gap-2 text-dark-muted relative">
           <button
             onClick={handleFormat}
             className="flex items-center gap-1.5 px-2 py-0.5 rounded hover:bg-dark-border/40 hover:text-dark-text transition-all cursor-pointer group"
@@ -444,7 +446,20 @@ export function MainLayout() {
           <span className="text-dark-border">|</span>
           <span>Java 8 Visualizer v1.0</span>
           <span className="text-dark-border">|</span>
+          <button
+            onClick={() => setIsNotepadOpen(prev => !prev)}
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded hover:bg-dark-border/40 hover:text-dark-text transition-all cursor-pointer ${isNotepadOpen ? 'text-dark-accent bg-dark-accent/10' : ''
+              }`}
+            title="Notepad & Checklist"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            <span>Notepad</span>
+          </button>
+          <span className="text-dark-border">|</span>
           <span>Step #{jvmState.stepNumber}</span>
+          <Notepad isOpen={isNotepadOpen} onClose={() => setIsNotepadOpen(false)} />
         </div>
       </footer>
     </div>
