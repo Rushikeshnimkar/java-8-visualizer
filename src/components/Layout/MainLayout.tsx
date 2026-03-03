@@ -16,6 +16,7 @@ import { VariableHistory, AllVariablesPanel } from '../Visualizations/VariableHi
 import ThreadsView from '../Visualizations/ThreadsView'
 import { DisclaimerModal } from './DisclaimerModal'
 import { useExecutionStore } from '../../state/executionStore'
+import { formatJavaCode } from '../../utils/javaFormatter'
 
 type VisualizationTab = 'data-structures' | 'stack' | 'heap' | 'variables' | 'history' | 'threads' | 'inheritance'
 type BottomTab = 'output' | 'method-area' | 'pc'
@@ -25,7 +26,15 @@ export function MainLayout() {
   const [bottomPanelHeight, setBottomPanelHeight] = useState(250)
   const [activeTab, setActiveTab] = useState<VisualizationTab>('data-structures')
   const [bottomTab, setBottomTab] = useState<BottomTab>('output')
-  const { compilationError, jvmState } = useExecutionStore()
+  const [formatDone, setFormatDone] = useState(false)
+  const { compilationError, jvmState, sourceCode, setSourceCode } = useExecutionStore()
+
+  const handleFormat = () => {
+    const formatted = formatJavaCode(sourceCode)
+    setSourceCode(formatted)
+    setFormatDone(true)
+    setTimeout(() => setFormatDone(false), 1500)
+  }
 
   const hasInheritance = Object.keys(jvmState.methodArea.loadedClasses).some(className => {
     const cls = jvmState.methodArea.loadedClasses[className]
@@ -422,6 +431,17 @@ export function MainLayout() {
         <div className="flex-1" />
 
         <div className="flex items-center gap-2 text-dark-muted">
+          <button
+            onClick={handleFormat}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded hover:bg-dark-border/40 hover:text-dark-text transition-all cursor-pointer group"
+            title="Format code (Prettier)"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h10M4 18h14" />
+            </svg>
+            <span>{formatDone ? '✓ Formatted' : 'Prettier'}</span>
+          </button>
+          <span className="text-dark-border">|</span>
           <span>Java 8 Visualizer v1.0</span>
           <span className="text-dark-border">|</span>
           <span>Step #{jvmState.stepNumber}</span>
