@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CodeInput } from '../CodeEditor/CodeInput'
 import { ControlPanel } from '../CodeEditor/ControlPanel'
+import { EditorSettingsBar } from '../CodeEditor/EditorSettings'
 import { JVMStack } from '../Visualizations/JVMStack'
 import { HeapView } from '../Visualizations/HeapView'
 import { MethodArea } from '../Visualizations/MethodArea'
@@ -130,6 +131,9 @@ export function MainLayout() {
           <div className="flex-1 overflow-hidden">
             <CodeInput />
           </div>
+
+          {/* Editor Settings Bar (bottom of editor) */}
+          <EditorSettingsBar />
 
           {/* Error Display */}
           <AnimatePresence>

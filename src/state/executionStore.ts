@@ -29,6 +29,11 @@ export interface ExecutionStore {
   executionSpeed: number // ms between steps
   setExecutionSpeed: (speed: number) => void
 
+  // Scanner input
+  waitingForInput: boolean
+  inputPromptMessage: string
+  submitInput: (value: string) => void
+
   // Actions
   compile: () => boolean
   step: () => ExecutionResult | null
@@ -65,6 +70,8 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
   isRunning: false,
   executionSpeed: 500,
   highlightedLine: 0,
+  waitingForInput: false,
+  inputPromptMessage: '',
 
   setSourceCode: (code) => {
     set({ sourceCode: code, compilationError: null })
@@ -90,6 +97,8 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
         currentInstruction: null,
         executionDescription: 'Ready to execute',
         highlightedLine: state.pc.currentLine,
+        waitingForInput: false,
+        inputPromptMessage: '',
       })
       return true
     } catch (error) {
@@ -103,10 +112,24 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
   },
 
   step: () => {
-    const { simulator } = get()
-    if (!simulator) return null
+    const { simulator, waitingForInput } = get()
+    if (!simulator || waitingForInput) return null
 
     const result = simulator.step()
+
+    // Check if simulator needs input after this step
+    if (simulator.getNeedsInput()) {
+      set({
+        jvmState: result.state,
+        currentInstruction: result.instruction,
+        executionDescription: result.description,
+        highlightedLine: result.state.pc.currentLine,
+        waitingForInput: true,
+        inputPromptMessage: simulator.getInputPrompt(),
+      })
+      return result
+    }
+
     set({
       jvmState: result.state,
       currentInstruction: result.instruction,
@@ -114,6 +137,21 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       highlightedLine: result.state.pc.currentLine,
     })
     return result
+  },
+
+  submitInput: (value: string) => {
+    const { simulator, isRunning } = get()
+    if (!simulator) return
+
+    // Feed the input into the simulator's queue
+    simulator.submitInput(value)
+    set({ waitingForInput: false, inputPromptMessage: '' })
+
+    // If we were in auto-run mode, resume running
+    if (isRunning) {
+      // Continue the run loop after a short delay
+      setTimeout(() => get().run(), 10)
+    }
   },
 
   stepBack: () => {
@@ -126,6 +164,8 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       currentInstruction: result.instruction,
       executionDescription: result.description,
       highlightedLine: result.state.pc.currentLine,
+      waitingForInput: false,
+      inputPromptMessage: '',
     })
     return result
   },
@@ -141,6 +181,8 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
         executionDescription: 'Reset to beginning',
         isRunning: false,
         highlightedLine: state.pc.currentLine,
+        waitingForInput: false,
+        inputPromptMessage: '',
       })
     } else if (compiledProgram) {
       get().compile()
@@ -150,9 +192,14 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
   run: () => {
     set({ isRunning: true })
     const runStep = () => {
-      const { isRunning, simulator, executionSpeed, jvmState } = get()
+      const { isRunning, simulator, executionSpeed, jvmState, waitingForInput } = get()
       if (!isRunning || !simulator || !simulator.canStepForward()) {
         set({ isRunning: false })
+        return
+      }
+
+      // If waiting for input, pause the auto-run — it will resume when input is submitted
+      if (waitingForInput) {
         return
       }
 
@@ -166,6 +213,12 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       }
 
       get().step()
+
+      // Check if we're now waiting for input after the step
+      if (get().waitingForInput) {
+        return // pause — will resume when submitInput is called
+      }
+
       setTimeout(runStep, executionSpeed)
     }
     runStep()
@@ -184,6 +237,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
     if (!simulator) return
 
     // Run all steps synchronously with safety limit
+    // If Scanner input is needed, the loop pauses and waits for user input
     let lastResult: ExecutionResult | null = null
     let steps = 0
     const MAX_STEPS = 50000
@@ -191,6 +245,21 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
     while (simulator.canStepForward() && steps < MAX_STEPS) {
       lastResult = simulator.step()
       steps++
+
+      // Check if simulator needs input
+      if (simulator.getNeedsInput()) {
+        // Pause and show the input prompt — update state so UI reflects current progress
+        set({
+          jvmState: lastResult!.state,
+          currentInstruction: lastResult!.instruction,
+          executionDescription: 'Waiting for input...',
+          highlightedLine: lastResult!.state.pc.currentLine,
+          isRunning: true, // mark as running so submitInput will resume
+          waitingForInput: true,
+          inputPromptMessage: simulator.getInputPrompt(),
+        })
+        return // Exit the loop — submitInput will call run() to resume
+      }
     }
 
     if (lastResult) {

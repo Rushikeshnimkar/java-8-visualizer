@@ -512,6 +512,9 @@ export class Parser {
     if (this.match(TokenType.SEMICOLON)) {
       return { kind: 'EmptyStatement', location: this.currentLocation() }
     }
+    if (this.match(TokenType.SWITCH)) {
+      return this.parseSwitchStatement()
+    }
 
     // Variable declaration or expression statement
     if (this.isVariableDeclaration()) {
@@ -866,6 +869,45 @@ export class Parser {
     }
   }
 
+  private parseSwitchStatement(): AST.SwitchStatement {
+    const location = this.currentLocation()
+    this.consume(TokenType.LPAREN, 'Expected "("')
+    const expression = this.parseExpression()
+    this.consume(TokenType.RPAREN, 'Expected ")"')
+    this.consume(TokenType.LBRACE, 'Expected "{"')
+
+    const cases: AST.SwitchCase[] = []
+    while (!this.check(TokenType.RBRACE) && !this.isAtEnd()) {
+      const caseLoc = this.currentLocation()
+      let test: AST.Expression | null = null
+
+      if (this.match(TokenType.CASE)) {
+        test = this.parseExpression()
+        this.consume(TokenType.COLON, 'Expected ":"')
+      } else if (this.match(TokenType.DEFAULT)) {
+        this.consume(TokenType.COLON, 'Expected ":"')
+        test = null
+      } else {
+        throw this.error('Expected "case" or "default"')
+      }
+
+      const body: AST.Statement[] = []
+      while (
+        !this.check(TokenType.CASE) &&
+        !this.check(TokenType.DEFAULT) &&
+        !this.check(TokenType.RBRACE) &&
+        !this.isAtEnd()
+      ) {
+        body.push(this.parseStatement())
+      }
+
+      cases.push({ kind: 'SwitchCase', test, body, location: caseLoc })
+    }
+
+    this.consume(TokenType.RBRACE, 'Expected "}"')
+    return { kind: 'SwitchStatement', expression, cases, location }
+  }
+
   // ============================================
   // Expressions (Precedence Climbing)
   // ============================================
@@ -897,7 +939,14 @@ export class Parser {
       this.check(TokenType.PLUS_EQUALS) ||
       this.check(TokenType.MINUS_EQUALS) ||
       this.check(TokenType.STAR_EQUALS) ||
-      this.check(TokenType.SLASH_EQUALS)
+      this.check(TokenType.SLASH_EQUALS) ||
+      this.check(TokenType.PERCENT_EQUALS) ||
+      this.check(TokenType.AND_EQUALS) ||
+      this.check(TokenType.OR_EQUALS) ||
+      this.check(TokenType.XOR_EQUALS) ||
+      this.check(TokenType.LEFT_SHIFT_EQUALS) ||
+      this.check(TokenType.RIGHT_SHIFT_EQUALS) ||
+      this.check(TokenType.UNSIGNED_RIGHT_SHIFT_EQUALS)
   }
 
   private parseConditional(): AST.Expression {
@@ -937,13 +986,64 @@ export class Parser {
   }
 
   private parseAnd(): AST.Expression {
-    let expr = this.parseEquality()
+    let expr = this.parseBitwiseOr()
 
     while (this.match(TokenType.AND)) {
-      const right = this.parseEquality()
+      const right = this.parseBitwiseOr()
       expr = {
         kind: 'BinaryExpression',
         operator: '&&',
+        left: expr,
+        right,
+        location: expr.location,
+      }
+    }
+
+    return expr
+  }
+
+  private parseBitwiseOr(): AST.Expression {
+    let expr = this.parseBitwiseXor()
+
+    while (this.match(TokenType.BITWISE_OR)) {
+      const right = this.parseBitwiseXor()
+      expr = {
+        kind: 'BinaryExpression',
+        operator: '|',
+        left: expr,
+        right,
+        location: expr.location,
+      }
+    }
+
+    return expr
+  }
+
+  private parseBitwiseXor(): AST.Expression {
+    let expr = this.parseBitwiseAnd()
+
+    while (this.match(TokenType.BITWISE_XOR)) {
+      const right = this.parseBitwiseAnd()
+      expr = {
+        kind: 'BinaryExpression',
+        operator: '^',
+        left: expr,
+        right,
+        location: expr.location,
+      }
+    }
+
+    return expr
+  }
+
+  private parseBitwiseAnd(): AST.Expression {
+    let expr = this.parseEquality()
+
+    while (this.match(TokenType.BITWISE_AND)) {
+      const right = this.parseEquality()
+      expr = {
+        kind: 'BinaryExpression',
+        operator: '&',
         left: expr,
         right,
         location: expr.location,
@@ -972,7 +1072,7 @@ export class Parser {
   }
 
   private parseComparison(): AST.Expression {
-    let expr = this.parseAdditive()
+    let expr = this.parseShift()
 
     while (
       this.check(TokenType.LESS) ||
@@ -991,7 +1091,7 @@ export class Parser {
         }
       } else {
         const operator = this.advance().value
-        const right = this.parseAdditive()
+        const right = this.parseShift()
         expr = {
           kind: 'BinaryExpression',
           operator,
@@ -999,6 +1099,28 @@ export class Parser {
           right,
           location: expr.location,
         }
+      }
+    }
+
+    return expr
+  }
+
+  private parseShift(): AST.Expression {
+    let expr = this.parseAdditive()
+
+    while (
+      this.check(TokenType.LEFT_SHIFT) ||
+      this.check(TokenType.RIGHT_SHIFT) ||
+      this.check(TokenType.UNSIGNED_RIGHT_SHIFT)
+    ) {
+      const operator = this.advance().value
+      const right = this.parseAdditive()
+      expr = {
+        kind: 'BinaryExpression',
+        operator,
+        left: expr,
+        right,
+        location: expr.location,
       }
     }
 

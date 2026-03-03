@@ -422,6 +422,9 @@ export class BytecodeCompiler {
           this.compileBlock(stmt.finallyBlock, ctx)
         }
         break
+      case 'SwitchStatement':
+        this.compileSwitchStatement(stmt, ctx)
+        break
       case 'EmptyStatement':
         // No-op
         break
@@ -604,6 +607,51 @@ export class BytecodeCompiler {
     ctx.instructions.push(createInstruction(OpCode.GOTO, [labelOperand(startLabel)], stmt.location.line))
   }
 
+  private compileSwitchStatement(stmt: AST.SwitchStatement, ctx: CompilerContext): void {
+    // Evaluate the switch expression and store in a temp local
+    this.compileExpression(stmt.expression, ctx)
+    const switchVarIndex = ctx.nextLocalIndex++
+    ctx.instructions.push(createInstruction(OpCode.STORE_LOCAL, [localOperand(switchVarIndex, '$switch')], stmt.location.line))
+
+    const endLabel = ctx.labelCounter++
+    // Push end label so break statements inside switch jump to end
+    ctx.loopEndLabels.push(endLabel)
+
+    // Create labels for each case body
+    const caseLabels: number[] = stmt.cases.map(() => ctx.labelCounter++)
+    let defaultLabel = endLabel // if no default, break goes to end
+
+    // Phase 1: Emit comparison jumps for each case
+    for (let i = 0; i < stmt.cases.length; i++) {
+      const c = stmt.cases[i]
+      if (c.test === null) {
+        // default case — remember its label
+        defaultLabel = caseLabels[i]
+      } else {
+        // Compare switch expression against case value
+        ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(switchVarIndex, '$switch')], c.location.line))
+        this.compileExpression(c.test, ctx)
+        ctx.instructions.push(createInstruction(OpCode.CMP_EQ, [], c.location.line))
+        ctx.instructions.push(createInstruction(OpCode.IF_TRUE, [labelOperand(caseLabels[i])], c.location.line))
+      }
+    }
+
+    // If no case matched, jump to default (or end)
+    ctx.instructions.push(createInstruction(OpCode.GOTO, [labelOperand(defaultLabel)], stmt.location.line))
+
+    // Phase 2: Emit case bodies with fall-through
+    for (let i = 0; i < stmt.cases.length; i++) {
+      this.resolveLabel(ctx, caseLabels[i])
+      for (const bodyStmt of stmt.cases[i].body) {
+        this.compileStatement(bodyStmt, ctx)
+      }
+      // No implicit break — natural fall-through to next case body
+    }
+
+    this.resolveLabel(ctx, endLabel)
+    ctx.loopEndLabels.pop()
+  }
+
   // ============================================
   // Expression Compilation
   // ============================================
@@ -727,6 +775,12 @@ export class BytecodeCompiler {
       '>=': OpCode.CMP_GE,
       '&&': OpCode.AND,
       '||': OpCode.OR,
+      '&': OpCode.BIT_AND,
+      '|': OpCode.BIT_OR,
+      '^': OpCode.BIT_XOR,
+      '<<': OpCode.SHL,
+      '>>': OpCode.SHR,
+      '>>>': OpCode.USHR,
     }
 
     const opcode = opMap[expr.operator]
@@ -844,7 +898,7 @@ export class BytecodeCompiler {
           ctx.instructions.push(createInstruction(OpCode.LOAD_LOCAL, [localOperand(local.index, expr.left.name)], expr.location.line))
           this.compileExpression(expr.right, ctx)
           const op = expr.operator.slice(0, -1) // Remove '='
-          const opMap: Record<string, OpCode> = { '+': OpCode.ADD, '-': OpCode.SUB, '*': OpCode.MUL, '/': OpCode.DIV }
+          const opMap: Record<string, OpCode> = { '+': OpCode.ADD, '-': OpCode.SUB, '*': OpCode.MUL, '/': OpCode.DIV, '%': OpCode.MOD, '&': OpCode.BIT_AND, '|': OpCode.BIT_OR, '^': OpCode.BIT_XOR, '<<': OpCode.SHL, '>>': OpCode.SHR, '>>>': OpCode.USHR }
           ctx.instructions.push(createInstruction(opMap[op], [], expr.location.line))
         }
         ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))
@@ -859,7 +913,7 @@ export class BytecodeCompiler {
           ctx.instructions.push(createInstruction(OpCode.GETFIELD, [fieldOperand(expr.left.name, '')], expr.location.line))
           this.compileExpression(expr.right, ctx)
           const op = expr.operator.slice(0, -1)
-          const opMap: Record<string, OpCode> = { '+': OpCode.ADD, '-': OpCode.SUB, '*': OpCode.MUL, '/': OpCode.DIV }
+          const opMap: Record<string, OpCode> = { '+': OpCode.ADD, '-': OpCode.SUB, '*': OpCode.MUL, '/': OpCode.DIV, '%': OpCode.MOD, '&': OpCode.BIT_AND, '|': OpCode.BIT_OR, '^': OpCode.BIT_XOR, '<<': OpCode.SHL, '>>': OpCode.SHR, '>>>': OpCode.USHR }
           ctx.instructions.push(createInstruction(opMap[op], [], expr.location.line))
         }
         ctx.instructions.push(createInstruction(OpCode.DUP_X1, [], expr.location.line))
@@ -872,7 +926,7 @@ export class BytecodeCompiler {
           ctx.instructions.push(createInstruction(OpCode.GETSTATIC, [fieldOperand(expr.left.name, ctx.className)], expr.location.line))
           this.compileExpression(expr.right, ctx)
           const op = expr.operator.slice(0, -1)
-          const opMap: Record<string, OpCode> = { '+': OpCode.ADD, '-': OpCode.SUB, '*': OpCode.MUL, '/': OpCode.DIV }
+          const opMap: Record<string, OpCode> = { '+': OpCode.ADD, '-': OpCode.SUB, '*': OpCode.MUL, '/': OpCode.DIV, '%': OpCode.MOD, '&': OpCode.BIT_AND, '|': OpCode.BIT_OR, '^': OpCode.BIT_XOR, '<<': OpCode.SHL, '>>': OpCode.SHR, '>>>': OpCode.USHR }
           ctx.instructions.push(createInstruction(opMap[op], [], expr.location.line))
         }
         ctx.instructions.push(createInstruction(OpCode.DUP, [], expr.location.line))

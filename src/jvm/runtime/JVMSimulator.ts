@@ -35,11 +35,42 @@ export class JVMSimulator {
   private history: JVMState[] = []
   private maxHistory: number = 500
   private nextObjectId: number = 1
+  private inputQueue: string[] = []
+  private needsInput: boolean = false
+  private inputPromptMessage: string = ''
 
   constructor(program: CompiledProgram) {
     this.program = program
     this.state = createInitialJVMState()
     this.initialize()
+  }
+
+  setInputQueue(inputs: string[]): void {
+    this.inputQueue = [...inputs]
+  }
+
+  submitInput(value: string): void {
+    this.inputQueue.push(value)
+    this.needsInput = false
+    this.inputPromptMessage = ''
+  }
+
+  getNeedsInput(): boolean {
+    return this.needsInput
+  }
+
+  getInputPrompt(): string {
+    return this.inputPromptMessage
+  }
+
+  private consumeInput(promptMessage: string): string | null {
+    if (this.inputQueue.length > 0) {
+      return this.inputQueue.shift()!
+    }
+    // No input available — signal that we need input and pause
+    this.needsInput = true
+    this.inputPromptMessage = promptMessage
+    return null // caller must check and abort
   }
 
   private initialize(): void {
@@ -674,17 +705,7 @@ export class JVMSimulator {
                   return '[' + (ho.arrayElements || []).map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
                 }
                 if (cn === 'HashMap' || cn === 'LinkedHashMap' || cn === 'TreeMap' || cn === 'Map') {
-                  const pairs = (ho.arrayElements || []).map(ev => {
-                    if (ev.kind === 'reference' && ev.objectId) {
-                      const eo = this.state.heap.find(o => o.id === ev.objectId)
-                      if (eo) {
-                        const ks = eo.fields.find(f => f.name === 'key')?.value
-                        const vs2 = eo.fields.find(f => f.name === 'value')?.value
-                        return `${ks?.kind === 'primitive' ? String(ks.value) : 'null'}=${vs2?.kind === 'primitive' ? String(vs2.value) : 'null'}`
-                      }
-                    }
-                    return 'null'
-                  })
+                  const pairs = ho.fields.map(f => `${f.name}=${f.value.kind === 'primitive' ? String(f.value.value) : 'null'}`)
                   return '{' + pairs.join(', ') + '}'
                 }
                 return `${cn}@${v.objectId}`
@@ -801,6 +822,78 @@ export class JVMSimulator {
         break
       }
 
+      case OpCode.BIT_AND: {
+        const b = frame.operandStack.pop()
+        const a = frame.operandStack.pop()
+        if (a?.kind === 'primitive' && b?.kind === 'primitive') {
+          const result = (a.value as number) & (b.value as number)
+          frame.operandStack.push(createPrimitiveValue('int', result))
+          description = `${a.value} & ${b.value} = ${result}`
+        }
+        frame.pc++
+        break
+      }
+
+      case OpCode.BIT_OR: {
+        const b = frame.operandStack.pop()
+        const a = frame.operandStack.pop()
+        if (a?.kind === 'primitive' && b?.kind === 'primitive') {
+          const result = (a.value as number) | (b.value as number)
+          frame.operandStack.push(createPrimitiveValue('int', result))
+          description = `${a.value} | ${b.value} = ${result}`
+        }
+        frame.pc++
+        break
+      }
+
+      case OpCode.BIT_XOR: {
+        const b = frame.operandStack.pop()
+        const a = frame.operandStack.pop()
+        if (a?.kind === 'primitive' && b?.kind === 'primitive') {
+          const result = (a.value as number) ^ (b.value as number)
+          frame.operandStack.push(createPrimitiveValue('int', result))
+          description = `${a.value} ^ ${b.value} = ${result}`
+        }
+        frame.pc++
+        break
+      }
+
+      case OpCode.SHL: {
+        const b = frame.operandStack.pop()
+        const a = frame.operandStack.pop()
+        if (a?.kind === 'primitive' && b?.kind === 'primitive') {
+          const result = (a.value as number) << (b.value as number)
+          frame.operandStack.push(createPrimitiveValue('int', result))
+          description = `${a.value} << ${b.value} = ${result}`
+        }
+        frame.pc++
+        break
+      }
+
+      case OpCode.SHR: {
+        const b = frame.operandStack.pop()
+        const a = frame.operandStack.pop()
+        if (a?.kind === 'primitive' && b?.kind === 'primitive') {
+          const result = (a.value as number) >> (b.value as number)
+          frame.operandStack.push(createPrimitiveValue('int', result))
+          description = `${a.value} >> ${b.value} = ${result}`
+        }
+        frame.pc++
+        break
+      }
+
+      case OpCode.USHR: {
+        const b = frame.operandStack.pop()
+        const a = frame.operandStack.pop()
+        if (a?.kind === 'primitive' && b?.kind === 'primitive') {
+          const result = (a.value as number) >>> (b.value as number)
+          frame.operandStack.push(createPrimitiveValue('int', result))
+          description = `${a.value} >>> ${b.value} = ${result}`
+        }
+        frame.pc++
+        break
+      }
+
       case OpCode.GOTO: {
         const target = (instr.operands[0] as { type: 'label'; target: number }).target
         frame.pc = target
@@ -881,19 +974,12 @@ export class JVMSimulator {
                 const elems = heapObj.arrayElements || []
                 outputStr = '[' + elems.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
               } else if (cn === 'HashMap' || cn === 'LinkedHashMap' || cn === 'TreeMap' || cn === 'Map') {
-                const entries = heapObj.arrayElements || []
+                // HashMap stores entries as fields with name=key, value=value
                 const pairs: string[] = []
-                for (const entryVal of entries) {
-                  if (entryVal.kind === 'reference' && entryVal.objectId) {
-                    const entryObj = this.state.heap.find(o => o.id === entryVal.objectId)
-                    if (entryObj) {
-                      const kf = entryObj.fields.find(f => f.name === 'key')
-                      const vf = entryObj.fields.find(f => f.name === 'value')
-                      const ks = kf?.value.kind === 'primitive' ? String(kf.value.value) : 'null'
-                      const vs = vf?.value.kind === 'primitive' ? String(vf.value.value) : 'null'
-                      pairs.push(`${ks}=${vs}`)
-                    }
-                  }
+                for (const field of heapObj.fields) {
+                  const ks = field.name
+                  const vs = field.value.kind === 'primitive' ? String(field.value.value) : 'null'
+                  pairs.push(`${ks}=${vs}`)
                 }
                 outputStr = '{' + pairs.join(', ') + '}'
               } else if (heapObj.fields.length > 0) {
@@ -1086,6 +1172,17 @@ export class JVMSimulator {
 
     // --- Try stdlib ---
     const stdlibResult = this.invokeStdlib(frame, methodName, args, isStatic, targetClassName, objRef)
+    if (stdlibResult === '__NEEDS_INPUT__') {
+      // Scanner needs input — restore the stack so the instruction can be retried
+      if (!isStatic && objRef) {
+        frame.operandStack.push(objRef)
+      }
+      for (const arg of args) {
+        frame.operandStack.push(arg)
+      }
+      // Do NOT advance PC — same instruction will be retried after input is submitted
+      return 'Waiting for input...'
+    }
     if (stdlibResult !== null) {
       frame.pc++
       return stdlibResult
@@ -2010,12 +2107,38 @@ export class JVMSimulator {
     // ---- Scanner ----
     if (obj && obj.className === 'Scanner') {
       switch (methodName) {
-        case '<init>': frame.operandStack.push(createNullValue()); return `Scanner.<init>`
-        case 'nextInt': frame.operandStack.push(createPrimitiveValue('int', 0)); return `Scanner.nextInt [returns 0 in simulation]`
-        case 'nextLine': case 'next': frame.operandStack.push(createPrimitiveValue('string', '')); return `Scanner.nextLine [returns "" in simulation]`
-        case 'nextDouble': frame.operandStack.push(createPrimitiveValue('double', 0.0)); return `Scanner.nextDouble`
-        case 'hasNextLine': case 'hasNext': case 'hasNextInt': frame.operandStack.push(createPrimitiveValue('boolean', false)); return `Scanner.hasNext`
-        case 'close': frame.operandStack.push(createNullValue()); return `Scanner.close`
+        case '<init>': return `Scanner.<init>`
+        case 'nextInt': {
+          const input = this.consumeInput('Enter an integer:')
+          if (input === null) return '__NEEDS_INPUT__'
+          const val = parseInt(input, 10)
+          frame.operandStack.push(createPrimitiveValue('int', isNaN(val) ? 0 : val))
+          return `Scanner.nextInt() → ${isNaN(val) ? 0 : val}`
+        }
+        case 'nextDouble': case 'nextFloat': {
+          const input = this.consumeInput('Enter a number:')
+          if (input === null) return '__NEEDS_INPUT__'
+          const val = parseFloat(input)
+          frame.operandStack.push(createPrimitiveValue('double', isNaN(val) ? 0.0 : val))
+          return `Scanner.${methodName}() → ${isNaN(val) ? 0.0 : val}`
+        }
+        case 'nextLine': case 'next': {
+          const input = this.consumeInput('Enter a string:')
+          if (input === null) return '__NEEDS_INPUT__'
+          frame.operandStack.push(createPrimitiveValue('string', input))
+          return `Scanner.${methodName}() → "${input}"`
+        }
+        case 'nextLong': {
+          const input = this.consumeInput('Enter a long:')
+          if (input === null) return '__NEEDS_INPUT__'
+          const val = parseInt(input, 10)
+          frame.operandStack.push(createPrimitiveValue('int', isNaN(val) ? 0 : val))
+          return `Scanner.nextLong() → ${isNaN(val) ? 0 : val}`
+        }
+        case 'hasNextLine': case 'hasNext': case 'hasNextInt': case 'hasNextDouble':
+          frame.operandStack.push(createPrimitiveValue('boolean', true))
+          return `Scanner.${methodName}() → true`
+        case 'close': return `Scanner.close()`
       }
     }
 

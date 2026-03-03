@@ -62,6 +62,14 @@ export enum OpCode {
   OR = 'OR',
   NOT = 'NOT',
 
+  // Bitwise Operations
+  BIT_AND = 'BIT_AND',                 // Bitwise AND
+  BIT_OR = 'BIT_OR',                   // Bitwise OR
+  BIT_XOR = 'BIT_XOR',                 // Bitwise XOR
+  SHL = 'SHL',                         // Shift left <<
+  SHR = 'SHR',                         // Shift right >>
+  USHR = 'USHR',                       // Unsigned shift right >>>
+
   // Control Flow
   GOTO = 'GOTO',                       // Unconditional jump
   IF_TRUE = 'IF_TRUE',                 // Jump if true
@@ -256,6 +264,12 @@ export function getOpcodeDescription(opcode: OpCode): string {
     [OpCode.AND]: 'Logical AND',
     [OpCode.OR]: 'Logical OR',
     [OpCode.NOT]: 'Logical NOT',
+    [OpCode.BIT_AND]: 'Bitwise AND',
+    [OpCode.BIT_OR]: 'Bitwise OR',
+    [OpCode.BIT_XOR]: 'Bitwise XOR',
+    [OpCode.SHL]: 'Shift left',
+    [OpCode.SHR]: 'Shift right',
+    [OpCode.USHR]: 'Unsigned shift right',
     [OpCode.GOTO]: 'Jump to label',
     [OpCode.IF_TRUE]: 'Jump if true',
     [OpCode.IF_FALSE]: 'Jump if false',

@@ -37,9 +37,49 @@ function displayValue(v: Value): string {
 
 // ─── Main View ──────────────────────────────────────────────────────────────
 
+// ── Pointer colors for array index variables ────────────────────────────────
+const POINTER_COLORS = [
+    { bg: 'bg-cyan-500', text: 'text-cyan-400', border: 'border-cyan-400', hex: '#22d3ee' },
+    { bg: 'bg-amber-500', text: 'text-amber-400', border: 'border-amber-400', hex: '#fbbf24' },
+    { bg: 'bg-rose-500', text: 'text-rose-400', border: 'border-rose-400', hex: '#fb7185' },
+    { bg: 'bg-lime-500', text: 'text-lime-400', border: 'border-lime-400', hex: '#a3e635' },
+    { bg: 'bg-violet-500', text: 'text-violet-400', border: 'border-violet-400', hex: '#a78bfa' },
+    { bg: 'bg-orange-500', text: 'text-orange-400', border: 'border-orange-400', hex: '#fb923c' },
+    { bg: 'bg-teal-500', text: 'text-teal-400', border: 'border-teal-400', hex: '#2dd4bf' },
+    { bg: 'bg-fuchsia-500', text: 'text-fuchsia-400', border: 'border-fuchsia-400', hex: '#e879f9' },
+]
+
+export interface ArrayPointer {
+    name: string
+    value: number
+    color: typeof POINTER_COLORS[0]
+}
+
 export function DataStructuresView() {
     const { jvmState } = useExecutionStore()
     const { heap } = jvmState
+
+    // Extract all int-typed local variables from every stack frame
+    // These are potential array index pointers (i, j, left, right, low, high, etc.)
+    const intVariables = useMemo(() => {
+        const vars: { name: string; value: number }[] = []
+        const seen = new Set<string>() // deduplicate by name
+        for (const frame of jvmState.stack) {
+            for (const lv of frame.localVariables) {
+                if (
+                    lv.value.kind === 'primitive' &&
+                    (lv.value.type === 'int' || lv.value.type === 'short' || lv.value.type === 'byte') &&
+                    typeof lv.value.value === 'number' &&
+                    !seen.has(lv.name) &&
+                    lv.name !== 'args' // skip main's args param
+                ) {
+                    seen.add(lv.name)
+                    vars.push({ name: lv.name, value: lv.value.value as number })
+                }
+            }
+        }
+        return vars
+    }, [jvmState.stack])
 
     const hashMaps = useMemo(() =>
         heap.filter(o =>
@@ -194,7 +234,23 @@ export function DataStructuresView() {
             {arrays.length > 0 && (
                 <Section title="Arrays" color="text-jvm-method" borderColor="border-jvm-method/30"
                     icon={<ArrayIcon />}>
-                    {arrays.map(a => <ArrayVisualization key={a.id} array={a} />)}
+                    {arrays.map(a => {
+                        const elems = a.arrayElements || []
+                        // Find integer vars whose current value is a valid index for this array
+                        const pointers: ArrayPointer[] = []
+                        let colorIdx = 0
+                        for (const iv of intVariables) {
+                            if (iv.value >= 0 && iv.value < elems.length) {
+                                pointers.push({
+                                    name: iv.name,
+                                    value: iv.value,
+                                    color: POINTER_COLORS[colorIdx % POINTER_COLORS.length],
+                                })
+                                colorIdx++
+                            }
+                        }
+                        return <ArrayVisualization key={a.id} array={a} pointers={pointers} />
+                    })}
                 </Section>
             )}
 
@@ -679,9 +735,30 @@ function ListVisualization({ obj }: { obj: HeapObject }) {
     )
 }
 
-// ─── Array Visualization ─────────────────────────────────────────────────────
-function ArrayVisualization({ array }: { array: HeapObject }) {
+// ─── Array Visualization with Pointer Support ────────────────────────────────
+function ArrayVisualization({ array, pointers = [] }: { array: HeapObject; pointers?: ArrayPointer[] }) {
     const elements = array.arrayElements || []
+
+    // Group pointers by the index they point to
+    const pointersByIndex = useMemo(() => {
+        const map = new Map<number, ArrayPointer[]>()
+        for (const p of pointers) {
+            const existing = map.get(p.value) || []
+            existing.push(p)
+            map.set(p.value, existing)
+        }
+        return map
+    }, [pointers])
+
+    // Calculate max pointer stack depth for consistent bottom padding
+    const maxPointerDepth = useMemo(() => {
+        let max = 0
+        for (const ptrs of pointersByIndex.values()) {
+            if (ptrs.length > max) max = ptrs.length
+        }
+        return max
+    }, [pointersByIndex])
+
     return (
         <div className="bg-dark-card border border-dark-border rounded-lg p-4 overflow-hidden shadow-sm">
             <div className="flex justify-between items-center mb-3">
@@ -689,30 +766,88 @@ function ArrayVisualization({ array }: { array: HeapObject }) {
                     <span className="text-xs font-mono font-bold text-jvm-method">@{array.id}</span>
                     <span className="text-sm font-semibold">{array.className}</span>
                 </div>
-                <span className="text-xs text-dark-muted px-2 py-0.5 bg-dark-bg rounded border border-dark-border">
-                    length: {elements.length}
-                </span>
+                <div className="flex items-center gap-3">
+                    {/* Pointer legend */}
+                    {pointers.length > 0 && (
+                        <div className="flex items-center gap-2">
+                            {pointers.map((p) => (
+                                <span
+                                    key={p.name}
+                                    className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${p.color.text} bg-dark-bg border ${p.color.border}/30`}
+                                >
+                                    {p.name}={p.value}
+                                </span>
+                            ))}
+                        </div>
+                    )}
+                    <span className="text-xs text-dark-muted px-2 py-0.5 bg-dark-bg rounded border border-dark-border">
+                        length: {elements.length}
+                    </span>
+                </div>
             </div>
-            <div className="overflow-x-auto pb-4 pt-2 hide-scrollbar">
+            <div className="overflow-x-auto hide-scrollbar" style={{ paddingBottom: maxPointerDepth > 0 ? `${maxPointerDepth * 24 + 16}px` : '16px', paddingTop: '8px' }}>
                 <div className="flex gap-1.5 min-w-max">
                     <AnimatePresence mode="popLayout">
-                        {elements.map((elem, i) => (
-                            <motion.div key={i} layout
-                                initial={{ opacity: 0, y: -20, scale: 0.8 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.5 }}
-                                transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-                                className="flex flex-col items-center"
-                            >
-                                <div className="text-[10px] text-dark-muted mb-1 font-mono">{i}</div>
-                                <div className="w-14 h-14 flex items-center justify-center bg-dark-bg border-2 border-jvm-method/50 rounded-md text-sm font-mono shadow-inner overflow-hidden relative group">
-                                    <div className="absolute inset-0 bg-jvm-method/5 group-hover:bg-jvm-method/10 transition-colors" />
-                                    <span className="truncate px-1 z-10 w-full text-center" title={valueToString(elem)}>
-                                        {valueToString(elem)}
-                                    </span>
-                                </div>
-                            </motion.div>
-                        ))}
+                        {elements.map((elem, i) => {
+                            const cellPointers = pointersByIndex.get(i) || []
+                            const hasPointer = cellPointers.length > 0
+                            const topPointerColor = hasPointer ? cellPointers[0].color : null
+
+                            return (
+                                <motion.div key={i} layout
+                                    initial={{ opacity: 0, y: -20, scale: 0.8 }}
+                                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.5 }}
+                                    transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                                    className="flex flex-col items-center relative"
+                                >
+                                    {/* Index label */}
+                                    <div className="text-[10px] text-dark-muted mb-1 font-mono">{i}</div>
+                                    {/* Cell — highlight border if pointed to */}
+                                    <div
+                                        className={`w-14 h-14 flex items-center justify-center bg-dark-bg rounded-md text-sm font-mono shadow-inner overflow-hidden relative group transition-all duration-200 ${hasPointer
+                                            ? `border-2 ${topPointerColor!.border} shadow-lg`
+                                            : 'border-2 border-jvm-method/50'
+                                            }`}
+                                        style={hasPointer ? { boxShadow: `0 0 12px ${topPointerColor!.hex}30` } : undefined}
+                                    >
+                                        <div className={`absolute inset-0 transition-colors ${hasPointer ? 'bg-white/5' : 'bg-jvm-method/5 group-hover:bg-jvm-method/10'
+                                            }`} />
+                                        <span className="truncate px-1 z-10 w-full text-center" title={valueToString(elem)}>
+                                            {valueToString(elem)}
+                                        </span>
+                                    </div>
+
+                                    {/* Pointer arrows stacked below the cell */}
+                                    {hasPointer && (
+                                        <div className="absolute top-full mt-0.5 flex flex-col items-center gap-0">
+                                            {cellPointers.map((ptr, pi) => (
+                                                <motion.div
+                                                    key={ptr.name}
+                                                    initial={{ opacity: 0, y: -4 }}
+                                                    animate={{ opacity: 1, y: 0 }}
+                                                    className="flex flex-col items-center"
+                                                >
+                                                    {/* Arrow line */}
+                                                    {pi === 0 && (
+                                                        <svg width="8" height="10" viewBox="0 0 8 10" className={ptr.color.text}>
+                                                            <line x1="4" y1="0" x2="4" y2="6" stroke="currentColor" strokeWidth="2" />
+                                                            <polygon points="0,6 4,10 8,6" fill="currentColor" />
+                                                        </svg>
+                                                    )}
+                                                    {/* Variable name label */}
+                                                    <span
+                                                        className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-sm ${ptr.color.text} whitespace-nowrap`}
+                                                    >
+                                                        {ptr.name}
+                                                    </span>
+                                                </motion.div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </motion.div>
+                            )
+                        })}
                     </AnimatePresence>
                     {elements.length === 0 && (
                         <div className="text-sm text-dark-muted italic py-4">Empty array</div>

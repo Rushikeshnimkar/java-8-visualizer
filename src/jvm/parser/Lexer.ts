@@ -86,6 +86,17 @@ export enum TokenType {
   NOT = 'NOT',
   BITWISE_AND = 'BITWISE_AND',
   BITWISE_OR = 'BITWISE_OR',
+  BITWISE_XOR = 'BITWISE_XOR',
+  LEFT_SHIFT = 'LEFT_SHIFT',
+  RIGHT_SHIFT = 'RIGHT_SHIFT',
+  UNSIGNED_RIGHT_SHIFT = 'UNSIGNED_RIGHT_SHIFT',
+  AND_EQUALS = 'AND_EQUALS',
+  OR_EQUALS = 'OR_EQUALS',
+  XOR_EQUALS = 'XOR_EQUALS',
+  LEFT_SHIFT_EQUALS = 'LEFT_SHIFT_EQUALS',
+  RIGHT_SHIFT_EQUALS = 'RIGHT_SHIFT_EQUALS',
+  UNSIGNED_RIGHT_SHIFT_EQUALS = 'UNSIGNED_RIGHT_SHIFT_EQUALS',
+  PERCENT_EQUALS = 'PERCENT_EQUALS',
   INCREMENT = 'INCREMENT',
   DECREMENT = 'DECREMENT',
 
@@ -329,7 +340,11 @@ export class Lexer {
         }
         break
       case '%':
-        this.addToken(TokenType.PERCENT, char)
+        if (this.match('=')) {
+          this.addToken(TokenType.PERCENT_EQUALS, '%=')
+        } else {
+          this.addToken(TokenType.PERCENT, char)
+        }
         break
       case '=':
         if (this.match('=')) {
@@ -346,14 +361,32 @@ export class Lexer {
         }
         break
       case '<':
-        if (this.match('=')) {
+        if (this.match('<')) {
+          if (this.match('=')) {
+            this.addToken(TokenType.LEFT_SHIFT_EQUALS, '<<=')
+          } else {
+            this.addToken(TokenType.LEFT_SHIFT, '<<')
+          }
+        } else if (this.match('=')) {
           this.addToken(TokenType.LESS_EQUALS, '<=')
         } else {
           this.addToken(TokenType.LESS, char)
         }
         break
       case '>':
-        if (this.match('=')) {
+        if (this.match('>')) {
+          if (this.match('>')) {
+            if (this.match('=')) {
+              this.addToken(TokenType.UNSIGNED_RIGHT_SHIFT_EQUALS, '>>>=')
+            } else {
+              this.addToken(TokenType.UNSIGNED_RIGHT_SHIFT, '>>>')
+            }
+          } else if (this.match('=')) {
+            this.addToken(TokenType.RIGHT_SHIFT_EQUALS, '>>=')
+          } else {
+            this.addToken(TokenType.RIGHT_SHIFT, '>>')
+          }
+        } else if (this.match('=')) {
           this.addToken(TokenType.GREATER_EQUALS, '>=')
         } else {
           this.addToken(TokenType.GREATER, char)
@@ -362,6 +395,8 @@ export class Lexer {
       case '&':
         if (this.match('&')) {
           this.addToken(TokenType.AND, '&&')
+        } else if (this.match('=')) {
+          this.addToken(TokenType.AND_EQUALS, '&=')
         } else {
           this.addToken(TokenType.BITWISE_AND, char)
         }
@@ -369,8 +404,17 @@ export class Lexer {
       case '|':
         if (this.match('|')) {
           this.addToken(TokenType.OR, '||')
+        } else if (this.match('=')) {
+          this.addToken(TokenType.OR_EQUALS, '|=')
         } else {
           this.addToken(TokenType.BITWISE_OR, char)
+        }
+        break
+      case '^':
+        if (this.match('=')) {
+          this.addToken(TokenType.XOR_EQUALS, '^=')
+        } else {
+          this.addToken(TokenType.BITWISE_XOR, char)
         }
         break
       case '"':

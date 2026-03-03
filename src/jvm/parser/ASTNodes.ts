@@ -111,7 +111,7 @@ export interface TypeNode extends ASTNode {
 // Statements
 // ============================================
 
-export type Statement = 
+export type Statement =
   | BlockStatement
   | VariableDeclaration
   | ExpressionStatement
@@ -124,6 +124,7 @@ export type Statement =
   | ContinueStatement
   | ThrowStatement
   | TryStatement
+  | SwitchStatement
   | EmptyStatement
 
 export interface BlockStatement extends ASTNode {
@@ -205,6 +206,18 @@ export interface CatchClause extends ASTNode {
 
 export interface EmptyStatement extends ASTNode {
   kind: 'EmptyStatement'
+}
+
+export interface SwitchStatement extends ASTNode {
+  kind: 'SwitchStatement'
+  expression: Expression
+  cases: SwitchCase[]
+}
+
+export interface SwitchCase extends ASTNode {
+  kind: 'SwitchCase'
+  test: Expression | null // null for default
+  body: Statement[]
 }
 
 // ============================================
