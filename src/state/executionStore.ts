@@ -35,6 +35,7 @@ export interface ExecutionStore {
   stepBack: () => ExecutionResult | null
   reset: () => void
   run: () => void
+  runAll: () => void
   pause: () => void
 
   // Helpers
@@ -168,6 +169,41 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       setTimeout(runStep, executionSpeed)
     }
     runStep()
+  },
+
+  runAll: () => {
+    // Compile first if not already compiled
+    const { compiledProgram } = get()
+    let compiled = !!compiledProgram
+    if (!compiled) {
+      compiled = get().compile()
+    }
+    if (!compiled) return
+
+    const { simulator } = get()
+    if (!simulator) return
+
+    // Run all steps synchronously with safety limit
+    let lastResult: ExecutionResult | null = null
+    let steps = 0
+    const MAX_STEPS = 50000
+
+    while (simulator.canStepForward() && steps < MAX_STEPS) {
+      lastResult = simulator.step()
+      steps++
+    }
+
+    if (lastResult) {
+      set({
+        jvmState: lastResult.state,
+        currentInstruction: lastResult.instruction,
+        executionDescription: steps >= MAX_STEPS
+          ? `Execution stopped: Exceeded ${MAX_STEPS} steps (possible infinite loop)`
+          : `Execution complete (${steps} steps)`,
+        highlightedLine: lastResult.state.pc.currentLine,
+        isRunning: false,
+      })
+    }
   },
 
   pause: () => {
