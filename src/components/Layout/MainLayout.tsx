@@ -2,7 +2,7 @@
 // Enhanced Main Layout with Better Visualization
 // ============================================
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CodeInput } from '../CodeEditor/CodeInput'
 import { ControlPanel } from '../CodeEditor/ControlPanel'
@@ -31,7 +31,27 @@ export function MainLayout() {
   const [isNotepadOpen, setIsNotepadOpen] = useState(false)
   const [snippetsEnabled, setSnippetsEnabled] = useState(true)
   const sharedEditorRef = useRef<any>(null)
-  const { compilationError, jvmState, sourceCode, setSourceCode } = useExecutionStore()
+  const { compilationError, jvmState, sourceCode, setSourceCode, autoSaveTime } = useExecutionStore()
+
+  // ── Auto-save label ─────────────────────────────────────────────────────
+  const [autoSaveLabel, setAutoSaveLabel] = useState<string | null>(null)
+
+  const formatRelativeTime = useCallback((ts: number) => {
+    const diff = Math.floor((Date.now() - ts) / 1000)
+    if (diff < 5) return 'just now'
+    if (diff < 60) return `${diff}s ago`
+    const m = Math.floor(diff / 60)
+    if (m < 60) return `${m}m ago`
+    return `${Math.floor(m / 60)}h ago`
+  }, [])
+
+  useEffect(() => {
+    if (!autoSaveTime) return
+    // Update the label immediately, then every second
+    setAutoSaveLabel(formatRelativeTime(autoSaveTime))
+    const id = setInterval(() => setAutoSaveLabel(formatRelativeTime(autoSaveTime)), 1000)
+    return () => clearInterval(id)
+  }, [autoSaveTime, formatRelativeTime])
 
   const handleFormat = () => {
     const formatted = formatJavaCode(sourceCode)
@@ -446,6 +466,16 @@ export function MainLayout() {
             <span>{formatDone ? '✓ Formatted' : 'Prettier'}</span>
           </button>
           <span className="text-dark-border">|</span>
+          {/* Auto-save indicator */}
+          {autoSaveLabel && (
+            <span className="flex items-center gap-1 text-green-400/80" title="Code is auto-saved in your browser">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+              <span>Saved {autoSaveLabel}</span>
+            </span>
+          )}
+          {autoSaveLabel && <span className="text-dark-border">|</span>}
           <span>Java 8 Visualizer v1.0</span>
           <span className="text-dark-border">|</span>
           <button
@@ -463,8 +493,8 @@ export function MainLayout() {
           <button
             onClick={() => setSnippetsEnabled(prev => !prev)}
             className={`flex items-center justify-center w-5 h-5 rounded transition-all cursor-pointer ${snippetsEnabled
-                ? 'text-dark-accent bg-dark-accent/15'
-                : 'text-dark-muted hover:text-dark-text hover:bg-dark-border/40'
+              ? 'text-dark-accent bg-dark-accent/15'
+              : 'text-dark-muted hover:text-dark-text hover:bg-dark-border/40'
               }`}
             title={snippetsEnabled ? 'Snippets ON — click to disable' : 'Snippets OFF — click to enable'}
           >

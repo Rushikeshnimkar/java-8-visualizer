@@ -956,14 +956,20 @@ export class BytecodeCompiler {
           if (outer.object.kind === 'IdentifierExpression' && outer.object.name === 'System' && outer.property === 'out') {
             // System.out.println or System.out.print
             const isPrintln = member.property === 'println'
-            if (expr.arguments.length > 0) {
-              for (const arg of expr.arguments) {
-                this.compileExpression(arg, ctx)
-              }
-            } else {
-              // No arguments (e.g., System.out.println())
-              // Push an empty string to print nothing but trigger a newline if isPrintln
+            if (expr.arguments.length === 0) {
+              // No arguments — push empty string for a blank newline
               ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [stringOperand('')], expr.location.line))
+            } else if (expr.arguments.length === 1) {
+              // Single argument — compile directly
+              this.compileExpression(expr.arguments[0], ctx)
+            } else {
+              // Multiple arguments — concatenate them all as a single string
+              // e.g. println("label =", value) → prints "label =value"
+              this.compileExpression(expr.arguments[0], ctx)
+              for (let i = 1; i < expr.arguments.length; i++) {
+                this.compileExpression(expr.arguments[i], ctx)
+                ctx.instructions.push(createInstruction(OpCode.ADD, [], expr.location.line))
+              }
             }
 
             ctx.instructions.push(createInstruction(
