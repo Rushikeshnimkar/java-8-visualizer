@@ -2,7 +2,7 @@
 // Enhanced Main Layout with Better Visualization
 // ============================================
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CodeInput } from '../CodeEditor/CodeInput'
 import { ControlPanel } from '../CodeEditor/ControlPanel'
@@ -29,6 +29,8 @@ export function MainLayout() {
   const [bottomTab, setBottomTab] = useState<BottomTab>('output')
   const [formatDone, setFormatDone] = useState(false)
   const [isNotepadOpen, setIsNotepadOpen] = useState(false)
+  const [snippetsEnabled, setSnippetsEnabled] = useState(true)
+  const sharedEditorRef = useRef<any>(null)
   const { compilationError, jvmState, sourceCode, setSourceCode } = useExecutionStore()
 
   const handleFormat = () => {
@@ -140,7 +142,7 @@ export function MainLayout() {
           style={{ width: `${leftPanelWidth}%` }}
         >
           <div className="flex-1 overflow-hidden">
-            <CodeInput />
+            <CodeInput externalEditorRef={sharedEditorRef} snippetsEnabled={snippetsEnabled} />
           </div>
 
           {/* Editor Settings Bar (bottom of editor) */}
@@ -456,6 +458,20 @@ export function MainLayout() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
             </svg>
             <span>Notepad</span>
+          </button>
+          <span className="text-dark-border">|</span>
+          <button
+            onClick={() => setSnippetsEnabled(prev => !prev)}
+            className={`flex items-center justify-center w-5 h-5 rounded transition-all cursor-pointer ${snippetsEnabled
+                ? 'text-dark-accent bg-dark-accent/15'
+                : 'text-dark-muted hover:text-dark-text hover:bg-dark-border/40'
+              }`}
+            title={snippetsEnabled ? 'Snippets ON — click to disable' : 'Snippets OFF — click to enable'}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
           </button>
           <span className="text-dark-border">|</span>
           <span>Step #{jvmState.stepNumber}</span>
