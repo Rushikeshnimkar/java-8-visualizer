@@ -983,12 +983,18 @@ export class JVMSimulator {
                 }
                 outputStr = '{' + pairs.join(', ') + '}'
               } else if (heapObj.fields.length > 0) {
-                // Generic object — try toString field, else show className@id
-                const tsField = heapObj.fields.find(f => f.name === 'toString')
-                if (tsField && tsField.value.kind === 'primitive') {
-                  outputStr = String(tsField.value.value)
+                // StringBuilder / StringBuffer: read the internal $sb field
+                const sbField = heapObj.fields.find(f => f.name === '$sb')
+                if (sbField && sbField.value.kind === 'primitive') {
+                  outputStr = String(sbField.value.value)
                 } else {
-                  outputStr = `${cn}@${value.objectId}`
+                  // Generic object — try toString field, else show className@id
+                  const tsField = heapObj.fields.find(f => f.name === 'toString')
+                  if (tsField && tsField.value.kind === 'primitive') {
+                    outputStr = String(tsField.value.value)
+                  } else {
+                    outputStr = `${cn}@${value.objectId}`
+                  }
                 }
               } else {
                 outputStr = `${cn}@${value.objectId}`
