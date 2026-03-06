@@ -4,6 +4,7 @@
 // ============================================
 
 import Editor from '@monaco-editor/react'
+import { registerJavaLanguage } from './javaLanguageConfig'
 import { useExecutionStore } from '../../state/executionStore'
 import {
   useEditorSettingsStore,
@@ -171,6 +172,9 @@ export function CodeInput({ snippetsEnabled = true, externalEditorRef }: CodeInp
 
     monaco.editor.setTheme(theme)
 
+    // ── Register Java language features (completions, signatures, hover) ──
+    registerJavaLanguage(monaco)
+
     // ── Register Java snippet completion provider ──────────────────────────
     monaco.languages.registerCompletionItemProvider('java', {
       triggerCharacters: [],
@@ -316,7 +320,39 @@ export function CodeInput({ snippetsEnabled = true, externalEditorRef }: CodeInp
           wordWrap: 'on',
           contextmenu: true,
           mouseWheelZoom: false,
-          snippetSuggestions: 'top', // our snippets appear at the top
+          snippetSuggestions: 'top',
+          // ── Enhanced IntelliSense options ──
+          parameterHints: { enabled: true, cycle: true },
+          suggest: {
+            showMethods: true,
+            showFunctions: true,
+            showClasses: true,
+            showKeywords: true,
+            showVariables: true,
+            showInterfaces: true,
+            showFields: true,
+            showSnippets: true,
+            preview: true,
+            filterGraceful: true,
+            localityBonus: true,
+            shareSuggestSelections: true,
+            showIcons: true,
+          },
+          acceptSuggestionOnCommitCharacter: true,
+          suggestSelection: 'first',
+          wordBasedSuggestions: 'currentDocument',
+          quickSuggestionsDelay: 50,
+          autoClosingBrackets: 'always',
+          autoClosingQuotes: 'always',
+          autoSurround: 'languageDefined',
+          formatOnType: true,
+          matchBrackets: 'always',
+          bracketPairColorization: { enabled: true, independentColorPoolPerBracketType: true },
+          guides: {
+            bracketPairs: true,
+            indentation: true,
+            highlightActiveIndentation: true,
+          },
           scrollbar: {
             vertical: 'auto',
             horizontal: 'auto',
