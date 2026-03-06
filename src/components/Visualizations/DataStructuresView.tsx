@@ -23,6 +23,7 @@ function bucketIndex(key: string, capacity: number): number {
 }
 
 function displayValue(v: Value): string {
+    if (!v) return 'undefined'
     if (v.kind === 'primitive') {
         if (v.value === null) return 'null'
         if (v.type === 'string') return `"${v.value}"`
@@ -67,7 +68,7 @@ export function DataStructuresView() {
         for (const frame of jvmState.stack) {
             for (const lv of frame.localVariables) {
                 if (
-                    lv.value.kind === 'primitive' &&
+                    lv.value && lv.value.kind === 'primitive' &&
                     (lv.value.type === 'int' || lv.value.type === 'short' || lv.value.type === 'byte') &&
                     typeof lv.value.value === 'number' &&
                     !seen.has(lv.name) &&
@@ -127,11 +128,11 @@ export function DataStructuresView() {
         treeNodes.forEach(node => {
             const leftField = node.fields.find(f => f.name === 'left')
             const rightField = node.fields.find(f => f.name === 'right')
-            if (leftField && leftField.value.kind === 'reference') {
+            if (leftField && leftField.value?.kind === 'reference') {
                 const rv = leftField.value as ReferenceValue
                 if (rv.objectId) childIds.add(rv.objectId)
             }
-            if (rightField && rightField.value.kind === 'reference') {
+            if (rightField && rightField.value?.kind === 'reference') {
                 const rv = rightField.value as ReferenceValue
                 if (rv.objectId) childIds.add(rv.objectId)
             }
@@ -159,7 +160,7 @@ export function DataStructuresView() {
         const nextRefIds = new Set<string>()
         nodes.forEach(n => {
             const nf = n.fields.find(f => f.name === 'next')
-            if (nf && nf.value.kind === 'reference') {
+            if (nf && nf.value?.kind === 'reference') {
                 const rv = nf.value as ReferenceValue
                 if (rv.objectId) nextRefIds.add(rv.objectId)
             }
@@ -173,7 +174,7 @@ export function DataStructuresView() {
                 chain.push(curr)
                 visited.add(curr.id)
                 const nf = curr.fields.find(f => f.name === 'next')
-                if (nf && nf.value.kind === 'reference') {
+                if (nf && nf.value?.kind === 'reference') {
                     const rv = nf.value as ReferenceValue
                     curr = rv.objectId ? nodes.find(n => n.id === rv.objectId) : undefined
                 } else { curr = undefined }
@@ -1068,7 +1069,7 @@ function BinaryTreeVisualization({ root, allNodes }: { root: HeapObject; allNode
             // Skip main and constructors — they build the tree, not traverse it
             if (frame.methodName === 'main' || frame.methodName === '<init>') continue
             for (const local of frame.localVariables) {
-                if (local.value.kind === 'reference') {
+                if (local.value?.kind === 'reference') {
                     const rv = local.value as ReferenceValue
                     if (rv.objectId && treeNodeIdSet.has(rv.objectId) && !pathIds.includes(rv.objectId)) {
                         pathIds.push(rv.objectId)

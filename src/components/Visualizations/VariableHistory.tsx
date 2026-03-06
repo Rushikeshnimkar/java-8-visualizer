@@ -363,7 +363,7 @@ export function AllVariablesPanel() {
               </motion.div>
               <span className="font-medium text-sm">Operand Stack</span>
               <span className="text-xs text-dark-muted">
-                ({jvmState.stack[jvmState.stack.length - 1]?.operandStack.length || 0})
+                ({jvmState.stack[jvmState.stack.length - 1]?.operandStack?.length || 0})
               </span>
             </div>
             
@@ -376,11 +376,11 @@ export function AllVariablesPanel() {
                   className="overflow-hidden"
                 >
                   <div className="p-2">
-                    {jvmState.stack[jvmState.stack.length - 1].operandStack.length === 0 ? (
+                    {jvmState.stack[jvmState.stack.length - 1]?.operandStack?.length === 0 ? (
                       <div className="text-xs text-dark-muted italic">Empty stack</div>
                     ) : (
                       <div className="flex flex-col-reverse gap-1">
-                        {jvmState.stack[jvmState.stack.length - 1].operandStack.map((v, i, arr) => (
+                        {jvmState.stack[jvmState.stack.length - 1]?.operandStack?.map((v, i, arr) => (
                           <div 
                             key={i} 
                             className={`flex items-center gap-2 p-2 rounded text-sm ${

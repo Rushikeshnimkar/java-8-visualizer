@@ -252,6 +252,7 @@ function StackFrameCard({ frame, index, isTop, isExpanded, onToggle, totalFrames
 
 function ValueDisplay({ value }: { value: Value }) {
   const getValueColor = () => {
+    if (!value) return 'text-dark-muted'
     switch (value.kind) {
       case 'primitive':
         if (value.type === 'string') return 'text-yellow-400'
@@ -270,6 +271,7 @@ function ValueDisplay({ value }: { value: Value }) {
   }
 
   const getIcon = () => {
+    if (!value) return '?'
     switch (value.kind) {
       case 'primitive':
         if (value.type === 'string') return '"'

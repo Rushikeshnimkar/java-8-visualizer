@@ -206,6 +206,7 @@ export function isNullValue(value: Value): boolean {
 }
 
 export function valueToString(value: Value): string {
+  if (!value) return 'undefined'
   switch (value.kind) {
     case 'primitive':
       if (value.value === null) return 'null'

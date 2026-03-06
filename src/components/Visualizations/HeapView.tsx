@@ -287,7 +287,7 @@ function ObjectFieldsVisualization({ fields, allObjects }: { fields: HeapObject[
               <span className="font-mono bg-dark-card px-1.5 py-0.5 rounded">
                 {valueToString(val)}
               </span>
-              {val.kind === 'reference' && val.objectId && (
+              {val?.kind === 'reference' && val.objectId && (
                 <span className="text-dark-muted">
                   → {allObjects.find(o => o.id === val.objectId)?.className || 'Object'}
                 </span>
@@ -349,7 +349,7 @@ function HeapTreeView({ objects }: { objects: HeapObject[] }) {
   objects.forEach(obj => {
     obj.references.forEach(ref => referencedIds.add(ref))
     obj.fields.forEach(field => {
-      if (field.value.kind === 'reference' && field.value.objectId) {
+      if (field.value?.kind === 'reference' && field.value.objectId) {
         referencedIds.add(field.value.objectId)
       }
     })

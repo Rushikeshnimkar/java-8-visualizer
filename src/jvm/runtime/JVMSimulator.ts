@@ -973,12 +973,12 @@ export class JVMSimulator {
               } else if (cn === 'ArrayList' || cn === 'LinkedList' || cn === 'Stack' || cn === 'Vector' || cn === 'List' || cn === 'ArrayDeque') {
                 const elems = heapObj.arrayElements || []
                 outputStr = '[' + elems.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
-              } else if (cn === 'HashMap' || cn === 'LinkedHashMap' || cn === 'TreeMap' || cn === 'Map') {
+              } else if (cn.endsWith('HashMap') || cn.endsWith('TreeMap') || cn.endsWith('Map')) {
                 // HashMap stores entries as fields with name=key, value=value
                 const pairs: string[] = []
                 for (const field of heapObj.fields) {
                   const ks = field.name
-                  const vs = field.value.kind === 'primitive' ? String(field.value.value) : 'null'
+                  const vs = this.valToString(field.value)
                   pairs.push(`${ks}=${vs}`)
                 }
                 outputStr = '{' + pairs.join(', ') + '}'
@@ -1140,11 +1140,6 @@ export class JVMSimulator {
     const numArgs = numArgsMatch ? parseInt(numArgsMatch[1], 10) : 0
 
     // --- Universal built-ins (before arg popping) ---
-    if (methodName === 'toString' && numArgs === 0 && !isStatic) {
-      const obj = frame.operandStack.pop()
-      frame.operandStack.push(createPrimitiveValue('string', obj ? valueToString(obj) : 'null'))
-      frame.pc++; return `toString()`
-    }
     if (methodName === 'hashCode' && numArgs === 0 && !isStatic) {
       frame.operandStack.pop()
       frame.operandStack.push(createPrimitiveValue('int', Math.floor(Math.random() * 100000)))
@@ -1261,7 +1256,15 @@ export class JVMSimulator {
 
   private valToString(v: Value): string {
     if (v.kind === 'primitive') return v.value === null ? 'null' : String(v.value)
-    if (v.kind === 'reference') return v.objectId ? `@${v.objectId}` : 'null'
+    if (v.kind === 'reference') {
+      if (!v.objectId) return 'null'
+      const obj = this.getHeapObj(v)
+      if (obj && (obj.className === 'String' || obj.className === 'java.lang.String')) {
+        const valF = obj.fields.find(f => f.name === 'value')
+        if (valF && valF.value.kind === 'primitive') return String(valF.value.value)
+      }
+      return `@${v.objectId}`
+    }
     return valueToString(v)
   }
 
@@ -1482,6 +1485,10 @@ export class JVMSimulator {
           frame.operandStack.push(createReferenceValue(arrId)); return `HashMap.values`
         }
         case 'forEach': frame.operandStack.push(createNullValue()); return `HashMap.forEach [simplified]`
+        case 'toString': {
+          const entries = obj!.fields.map(f => `${f.name}=${this.valToString(f.value)}`).join(', ')
+          frame.operandStack.push(createPrimitiveValue('string', `{${entries}}`)); return `HashMap.toString`
+        }
       }
     }
 
@@ -2107,6 +2114,7 @@ export class JVMSimulator {
         case 'delete': { const f = sbField(); if (f && f.value.kind === 'primitive') { const s = String(f.value.value); const a = args[0]?.kind === 'primitive' ? (args[0].value as number) : 0; const b = args[1]?.kind === 'primitive' ? (args[1].value as number) : s.length; f.value = createPrimitiveValue('string', s.slice(0, a) + s.slice(b)) } frame.operandStack.push(objRef || createNullValue()); return `StringBuilder.delete` }
         case 'insert': { const f = sbField(); if (f && f.value.kind === 'primitive') { const s = String(f.value.value); const pos = args[0]?.kind === 'primitive' ? (args[0].value as number) : 0; const ins = args[1]?.kind === 'primitive' ? String(args[1].value) : ''; f.value = createPrimitiveValue('string', s.slice(0, pos) + ins + s.slice(pos)) } frame.operandStack.push(objRef || createNullValue()); return `StringBuilder.insert` }
         case 'charAt': { const f = sbField(); const s = f?.value.kind === 'primitive' ? String(f.value.value) : ''; const i = args[0]?.kind === 'primitive' ? (args[0].value as number) : 0; frame.operandStack.push(createPrimitiveValue('char', s.charAt(i))); return `StringBuilder.charAt` }
+        case 'setLength': { const f = sbField(); const newLen = args[0]?.kind === 'primitive' ? (args[0].value as number) : 0; if (f && f.value.kind === 'primitive') { const s = String(f.value.value); f.value = createPrimitiveValue('string', s.length > newLen ? s.slice(0, newLen) : s.padEnd(newLen, '\0')) } return `StringBuilder.setLength` }
       }
     }
 
@@ -2152,6 +2160,10 @@ export class JVMSimulator {
     if (obj && (obj.type === 'array') && methodName === 'iterator') {
       const itId = this.createIterator(obj)
       frame.operandStack.push(createReferenceValue(itId)); return `array.iterator`
+    }
+
+    if (obj && methodName === 'toString' && args.length === 0) {
+      frame.operandStack.push(createPrimitiveValue('string', this.valToString(objRef!))); return `Object.toString`
     }
 
     return null // not handled
