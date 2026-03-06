@@ -311,10 +311,28 @@ export class Parser {
 
   private parseField(
     modifiers: string[],
-    type: AST.TypeNode,
+    baseType: AST.TypeNode,
     name: string,
     location: AST.SourceLocation
   ): AST.FieldDeclaration {
+    // Support C-style array declaration in fields (e.g., int arr[])
+    let dims = baseType.arrayDimensions || 0
+    let saved = this.pos
+    while (this.check(TokenType.LBRACKET)) {
+      this.advance()
+      if (this.check(TokenType.RBRACKET)) {
+        this.advance()
+        dims++
+        saved = this.pos
+      } else {
+        this.pos = saved
+        break
+      }
+    }
+    const type = dims > (baseType.arrayDimensions || 0) 
+      ? { ...baseType, isArray: true, arrayDimensions: dims } 
+      : baseType
+
     let initializer: AST.Expression | null = null
     if (this.match(TokenType.EQUALS)) {
       initializer = this.parseExpression()
@@ -348,8 +366,26 @@ export class Parser {
   private parseParameter(): AST.Parameter {
     const location = this.currentLocation()
     const isFinal = this.match(TokenType.FINAL)
-    const type = this.parseType()
+    const baseType = this.parseType()
     const name = this.consume(TokenType.IDENTIFIER, 'Expected parameter name').value
+
+    // Support C-style array declaration in parameters (e.g., int arr[])
+    let dims = baseType.arrayDimensions || 0
+    let saved = this.pos
+    while (this.check(TokenType.LBRACKET)) {
+      this.advance()
+      if (this.check(TokenType.RBRACKET)) {
+        this.advance()
+        dims++
+        saved = this.pos
+      } else {
+        this.pos = saved
+        break
+      }
+    }
+    const type = dims > (baseType.arrayDimensions || 0) 
+      ? { ...baseType, isArray: true, arrayDimensions: dims } 
+      : baseType
 
     return {
       kind: 'Parameter',
@@ -779,8 +815,26 @@ export class Parser {
   private parseVariableDeclarationNoSemicolon(): AST.VariableDeclaration {
     const location = this.currentLocation()
     const isFinal = this.match(TokenType.FINAL)
-    const type = this.parseType()
+    const baseType = this.parseType()
     const name = this.consume(TokenType.IDENTIFIER, 'Expected variable name').value
+
+    // Support C-style array declaration (e.g., int arr[])
+    let dims = baseType.arrayDimensions || 0
+    let saved = this.pos
+    while (this.check(TokenType.LBRACKET)) {
+      this.advance()
+      if (this.check(TokenType.RBRACKET)) {
+        this.advance()
+        dims++
+        saved = this.pos
+      } else {
+        this.pos = saved
+        break
+      }
+    }
+    const type = dims > (baseType.arrayDimensions || 0) 
+      ? { ...baseType, isArray: true, arrayDimensions: dims } 
+      : baseType
 
     let initializer: AST.Expression | null = null
     if (this.match(TokenType.EQUALS)) {
