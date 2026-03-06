@@ -14,6 +14,7 @@ export function ControlPanel() {
     stepBack,
     reset,
     run,
+    runAll,
     pause,
     isRunning,
     canStepForward,
@@ -150,6 +151,21 @@ export function ControlPanel() {
           Run
         </motion.button>
       )}
+
+      {/* Run All - Instant Output */}
+      <motion.button
+        whileHover={{ scale: 1.02 }}
+        whileTap={{ scale: 0.98 }}
+        onClick={() => runAll()}
+        disabled={isRunning}
+        className={`${buttonClass} bg-dark-accent hover:bg-dark-accent/80 text-white disabled:opacity-40`}
+        title="Compile & run all steps instantly — show output directly"
+      >
+        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M13 2L3 14h9l-1 10 10-12h-9l1-10z" />
+        </svg>
+        Output
+      </motion.button>
 
       {/* Reset Button */}
       <motion.button
