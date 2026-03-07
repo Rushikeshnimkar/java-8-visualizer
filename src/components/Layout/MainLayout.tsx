@@ -2,7 +2,7 @@
 // Enhanced Main Layout with Better Visualization
 // ============================================
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CodeInput } from '../CodeEditor/CodeInput'
 import { ControlPanel } from '../CodeEditor/ControlPanel'
@@ -34,24 +34,7 @@ export function MainLayout() {
   const { compilationError, jvmState, sourceCode, setSourceCode, autoSaveTime } = useExecutionStore()
 
   // ── Auto-save label ─────────────────────────────────────────────────────
-  const [autoSaveLabel, setAutoSaveLabel] = useState<string | null>(null)
-
-  const formatRelativeTime = useCallback((ts: number) => {
-    const diff = Math.floor((Date.now() - ts) / 1000)
-    if (diff < 5) return 'just now'
-    if (diff < 60) return `${diff}s ago`
-    const m = Math.floor(diff / 60)
-    if (m < 60) return `${m}m ago`
-    return `${Math.floor(m / 60)}h ago`
-  }, [])
-
-  useEffect(() => {
-    if (!autoSaveTime) return
-    // Update the label immediately, then every second
-    setAutoSaveLabel(formatRelativeTime(autoSaveTime))
-    const id = setInterval(() => setAutoSaveLabel(formatRelativeTime(autoSaveTime)), 1000)
-    return () => clearInterval(id)
-  }, [autoSaveTime, formatRelativeTime])
+  // Simplified: we just show "Saved" if autoSaveTime exists, no timer needed.
 
   const handleFormat = () => {
     const formatted = formatJavaCode(sourceCode)
@@ -467,15 +450,15 @@ export function MainLayout() {
           </button>
           <span className="text-dark-border">|</span>
           {/* Auto-save indicator */}
-          {autoSaveLabel && (
+          {autoSaveTime && (
             <span className="flex items-center gap-1 text-green-400/80" title="Code is auto-saved in your browser">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
-              <span>Saved {autoSaveLabel}</span>
+              <span>Saved</span>
             </span>
           )}
-          {autoSaveLabel && <span className="text-dark-border">|</span>}
+          {autoSaveTime && <span className="text-dark-border">|</span>}
           <span>Java 8 Visualizer v1.0</span>
           <span className="text-dark-border">|</span>
           <button
