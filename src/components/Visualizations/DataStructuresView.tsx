@@ -22,19 +22,7 @@ function bucketIndex(key: string, capacity: number): number {
     return Math.abs(simpleHashCode(key)) % capacity
 }
 
-function displayValue(v: Value): string {
-    if (!v) return 'undefined'
-    if (v.kind === 'primitive') {
-        if (v.value === null) return 'null'
-        if (v.type === 'string') return `"${v.value}"`
-        if (v.type === 'char') return `'${v.value}'`
-        if (v.type === 'boolean') return v.value ? 'true' : 'false'
-        return String(v.value)
-    }
-    if (v.kind === 'reference') return v.objectId ? `@${v.objectId}` : 'null'
-    if (v.kind === 'array') return `${v.elementType}[]@${v.objectId}`
-    return valueToString(v)
-}
+
 
 // ─── Main View ──────────────────────────────────────────────────────────────
 
@@ -59,6 +47,34 @@ export interface ArrayPointer {
 export function DataStructuresView() {
     const { jvmState } = useExecutionStore()
     const { heap } = jvmState
+
+    const displayValue = React.useCallback((v: Value): string => {
+        if (!v) return 'undefined'
+        if (v.kind === 'primitive') {
+            if (v.value === null) return 'null'
+            if (v.type === 'string') return `"${v.value}"`
+            if (v.type === 'char') return `'${v.value}'`
+            if (v.type === 'boolean') return v.value ? 'true' : 'false'
+            return String(v.value)
+        }
+        if (v.kind === 'reference' && v.objectId) {
+            const obj = heap.find(o => o.id === v.objectId)
+            if (obj && obj.type === 'array') {
+                return `[${(obj.arrayElements || []).map(e => {
+                    if (e && e.kind === 'reference' && e.objectId) {
+                        const nested = heap.find(no => no.id === e.objectId)
+                        if (nested && nested.type === 'array') {
+                            return `[...]` // prevent deep nesting output overflow
+                        }
+                    }
+                    return e && e.kind === 'primitive' ? String(e.value) : (e ? `@${e.objectId}` : 'null')
+                }).join(', ')}]`
+            }
+            return `@${v.objectId}`
+        }
+        if (v.kind === 'array') return `${v.elementType}[]@${v.objectId}`
+        return valueToString(v)
+    }, [heap])
 
     // Extract all int-typed local variables from every stack frame
     // These are potential array index pointers (i, j, left, right, low, high, etc.)
@@ -211,7 +227,7 @@ export function DataStructuresView() {
             {hashMaps.length > 0 && (
                 <Section title="HashMap" color="text-purple-400" borderColor="border-purple-400/30"
                     icon={<HashIcon />}>
-                    {hashMaps.map(m => <HashMapVisualization key={m.id} obj={m} />)}
+                    {hashMaps.map(m => <HashMapVisualization key={m.id} obj={m} displayValue={displayValue} />)}
                 </Section>
             )}
 
@@ -219,7 +235,7 @@ export function DataStructuresView() {
             {hashSets.length > 0 && (
                 <Section title="HashSet" color="text-pink-400" borderColor="border-pink-400/30"
                     icon={<SetIcon />}>
-                    {hashSets.map(s => <HashSetVisualization key={s.id} obj={s} />)}
+                    {hashSets.map(s => <HashSetVisualization key={s.id} obj={s} displayValue={displayValue} />)}
                 </Section>
             )}
 
@@ -227,7 +243,7 @@ export function DataStructuresView() {
             {lists.length > 0 && (
                 <Section title="List" color="text-jvm-method" borderColor="border-jvm-method/30"
                     icon={<ListIcon />}>
-                    {lists.map(l => <ListVisualization key={l.id} obj={l} />)}
+                    {lists.map(l => <ListVisualization key={l.id} obj={l} displayValue={displayValue} />)}
                 </Section>
             )}
 
@@ -250,7 +266,7 @@ export function DataStructuresView() {
                                 colorIdx++
                             }
                         }
-                        return <ArrayVisualization key={a.id} array={a} pointers={pointers} />
+                        return <ArrayVisualization key={a.id} array={a} pointers={pointers} displayValue={displayValue} />
                     })}
                 </Section>
             )}
@@ -259,7 +275,7 @@ export function DataStructuresView() {
             {linkedListChains.length > 0 && (
                 <Section title="Linked Lists" color="text-jvm-pc" borderColor="border-jvm-pc/30"
                     icon={<LinkIcon />}>
-                    {linkedListChains.map((chain, i) => <LinkedListVisualization key={i} chain={chain} />)}
+                    {linkedListChains.map((chain, i) => <LinkedListVisualization key={i} chain={chain} displayValue={displayValue} />)}
                 </Section>
             )}
 
@@ -268,7 +284,7 @@ export function DataStructuresView() {
                 <Section title="Binary Trees" color="text-emerald-400" borderColor="border-emerald-400/30"
                     icon={<TreeIcon />}>
                     {binaryTrees.map(({ root, allNodes }) => (
-                        <BinaryTreeVisualization key={root.id} root={root} allNodes={allNodes} />
+                        <BinaryTreeVisualization key={root.id} root={root} allNodes={allNodes} displayValue={displayValue} />
                     ))}
                 </Section>
             )}
@@ -329,13 +345,13 @@ const TreeIcon = () => (
 )
 
 // ─── HashMap Visualization ───────────────────────────────────────────────────
-function HashMapVisualization({ obj }: { obj: HeapObject }) {
+function HashMapVisualization({ obj, displayValue }: { obj: HeapObject, displayValue: (v: Value) => string }) {
     const CAPACITY = 16
     const LOAD_FACTOR_THRESHOLD = 0.75 // default Java HashMap load factor
     const entries = obj.fields.filter(f => !f.isStatic)
     const fillRatio = entries.length / CAPACITY // current fill = size / capacity
     const [showAll, setShowAll] = useState(false)
-
+    
     // Build bucket array
     const buckets: { idx: number; entries: typeof entries }[] = Array.from({ length: CAPACITY }, (_, i) => ({
         idx: i, entries: []
@@ -434,8 +450,8 @@ function HashMapVisualization({ obj }: { obj: HeapObject }) {
                 </div>
                 <AnimatePresence>
                     {allBuckets.map(bucket => (
-                        <BucketRow key={bucket.idx} bucketIndex={bucket.idx} entries={bucket.entries}
-                            capacity={CAPACITY} accentColor="purple" />
+                        <MapBucketRow key={bucket.idx} bucketIndex={bucket.idx} entries={bucket.entries}
+                            capacity={CAPACITY} accentColor="purple" displayValue={displayValue} />
                     ))}
                 </AnimatePresence>
                 {entries.length === 0 && (
@@ -447,11 +463,12 @@ function HashMapVisualization({ obj }: { obj: HeapObject }) {
 }
 
 // ─── Bucket Row ───────────────────────────────────────────────────────────────
-function BucketRow({ bucketIndex: idx, entries, capacity, accentColor }: {
+function MapBucketRow({ bucketIndex: idx, entries, capacity, accentColor, displayValue }: {
     bucketIndex: number
     entries: { name: string; type: string; value: Value; isStatic: boolean }[]
     capacity: number
     accentColor: 'purple' | 'pink'
+    displayValue: (v: Value) => string
 }) {
     const isEmpty = entries.length === 0
     const colors = {
@@ -530,7 +547,7 @@ function BucketRow({ bucketIndex: idx, entries, capacity, accentColor }: {
 }
 
 // ─── HashSet Visualization ───────────────────────────────────────────────────
-function HashSetVisualization({ obj }: { obj: HeapObject }) {
+function HashSetVisualization({ obj, displayValue }: { obj: HeapObject, displayValue: (v: Value) => string }) {
     const CAPACITY = 16
     const elements = obj.arrayElements || []
     const loadFactor = elements.length / CAPACITY
@@ -614,7 +631,7 @@ function HashSetVisualization({ obj }: { obj: HeapObject }) {
                 </div>
                 <AnimatePresence>
                     {shown.map(bucket => (
-                        <SetBucketRow key={bucket.idx} bucketIndex={bucket.idx} elems={bucket.elems} capacity={CAPACITY} />
+                        <SetBucketRow key={bucket.idx} bucketIndex={bucket.idx} elems={bucket.elems} capacity={CAPACITY} displayValue={displayValue} />
                     ))}
                 </AnimatePresence>
                 {elements.length === 0 && (
@@ -625,7 +642,7 @@ function HashSetVisualization({ obj }: { obj: HeapObject }) {
     )
 }
 
-function SetBucketRow({ bucketIndex: idx, elems, capacity }: { bucketIndex: number; elems: Value[]; capacity: number }) {
+function SetBucketRow({ bucketIndex: idx, elems, capacity, displayValue }: { bucketIndex: number; elems: Value[]; capacity: number; displayValue: (v: Value) => string }) {
     const isEmpty = elems.length === 0
     return (
         <motion.div
@@ -676,7 +693,47 @@ function SetBucketRow({ bucketIndex: idx, elems, capacity }: { bucketIndex: numb
 }
 
 // ─── List Visualization ───────────────────────────────────────────────────────
-function ListVisualization({ obj }: { obj: HeapObject }) {
+function LinkedListNode({ node, isFirst, isLast, displayValue }: { node: HeapObject; isFirst: boolean; isLast: boolean; displayValue: (v: Value) => string }) {
+    const dataField = node.fields.find(f => ['val', 'data', 'value'].includes(f.name))
+    const dataVal = dataField ? displayValue(dataField.value) : '?'
+    return (
+        <React.Fragment>
+            <motion.div
+                layout
+                initial={{ opacity: 0, y: -20, scale: 0.8 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.5 }}
+                transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                className="flex flex-col items-center"
+            >
+                {/* Node ID */}
+                <div className="text-[10px] text-dark-muted mb-1 font-mono">@{node.id}</div>
+                {/* Node Cell */}
+                <div className="min-w-[64px] min-h-[64px] flex flex-col items-center justify-center bg-dark-bg border-2 border-jvm-pc/50 rounded-lg text-sm font-mono shadow-inner overflow-hidden relative group cursor-default p-2">
+                    <div className="absolute inset-0 bg-jvm-pc/5 group-hover:bg-jvm-pc/15 transition-colors" />
+                    <span className="truncate px-1 z-10 w-full text-center text-dark-text font-semibold" title={dataVal}>
+                        {dataVal}
+                    </span>
+                    {isFirst && (
+                        <span className="absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2 text-[8px] font-bold text-jvm-pc bg-jvm-pc/10 border border-jvm-pc/30 rounded-full px-1.5 py-0.5">
+                            HEAD
+                        </span>
+                    )}
+                </div>
+            </motion.div>
+            {!isLast && (
+                <div className="flex items-center">
+                    <svg width="24" height="16" viewBox="0 0 24 16" className="text-jvm-pc">
+                        <line x1="0" y1="8" x2="20" y2="8" stroke="currentColor" strokeWidth="2" />
+                        <polygon points="16,0 24,8 16,16" fill="currentColor" />
+                    </svg>
+                </div>
+            )}
+        </React.Fragment>
+    )
+}
+
+function ListVisualization({ obj, displayValue }: { obj: HeapObject, displayValue: (v: Value) => string }) {
     const elements = obj.arrayElements || []
 
     return (
@@ -737,7 +794,7 @@ function ListVisualization({ obj }: { obj: HeapObject }) {
 }
 
 // ─── Array Visualization with Pointer Support ────────────────────────────────
-function ArrayVisualization({ array, pointers = [] }: { array: HeapObject; pointers?: ArrayPointer[] }) {
+function ArrayVisualization({ array, pointers = [], displayValue }: { array: HeapObject; pointers?: ArrayPointer[], displayValue: (v: Value) => string }) {
     const elements = array.arrayElements || []
 
     // Group pointers by the index they point to
@@ -814,8 +871,8 @@ function ArrayVisualization({ array, pointers = [] }: { array: HeapObject; point
                                     >
                                         <div className={`absolute inset-0 transition-colors ${hasPointer ? 'bg-white/5' : 'bg-jvm-method/5 group-hover:bg-jvm-method/10'
                                             }`} />
-                                        <span className="truncate px-1 z-10 w-full text-center" title={valueToString(elem)}>
-                                            {valueToString(elem)}
+                                        <span className="truncate px-1 z-10 w-full text-center" title={displayValue(elem)}>
+                                            {displayValue(elem)}
                                         </span>
                                     </div>
 
@@ -860,7 +917,7 @@ function ArrayVisualization({ array, pointers = [] }: { array: HeapObject; point
 }
 
 // ─── Linked List Visualization ────────────────────────────────────────────────
-function LinkedListVisualization({ chain }: { chain: HeapObject[] }) {
+function LinkedListVisualization({ chain, displayValue }: { chain: HeapObject[], displayValue: (v: Value) => string }) {
     return (
         <div className="bg-dark-card border border-dark-border rounded-lg p-4 overflow-x-auto hide-scrollbar shadow-sm">
             <div className="text-xs text-dark-muted mb-3 font-mono flex items-center gap-2">
@@ -870,65 +927,15 @@ function LinkedListVisualization({ chain }: { chain: HeapObject[] }) {
                 <span>Nodes: {chain.length}</span>
             </div>
             <div className="flex items-center min-w-max p-2 gap-0">
-                {chain.map((node, i) => {
-                    const dataField = node.fields.find(f => ['val', 'data', 'value'].includes(f.name))
-                    const dataVal = dataField ? displayValue(dataField.value) : '?'
-                    const isLast = i === chain.length - 1
-                    return (
-                        <React.Fragment key={node.id}>
-                            <motion.div
-                                initial={{ opacity: 0, x: -20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ type: 'spring', stiffness: 300, damping: 20, delay: i * 0.05 }}
-                                className="flex items-stretch bg-dark-bg border-2 border-jvm-pc/60 rounded-md shadow-md"
-                                title={`Node @${node.id}`}
-                            >
-                                <div className="w-16 h-12 flex flex-col items-center justify-center border-r-[1.5px] border-dashed border-jvm-pc/40 px-2 relative group">
-                                    <span className="text-[9px] text-dark-muted absolute top-0.5 left-1 font-mono opacity-60">
-                                        {dataField?.name || 'val'}
-                                    </span>
-                                    <span className="font-mono text-base font-bold text-dark-text truncate w-full text-center pt-2">
-                                        {dataVal}
-                                    </span>
-                                </div>
-                                <div className="w-8 flex items-center justify-center bg-jvm-pc/5 group relative">
-                                    <span className="text-[8px] text-jvm-pc/60 absolute bottom-0.5">next</span>
-                                    <div className="w-2 h-2 rounded-full bg-jvm-pc/80" />
-                                </div>
-                            </motion.div>
-                            {!isLast && (
-                                <motion.div
-                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                                    transition={{ delay: i * 0.05 + 0.1 }}
-                                    className="w-10 h-6 flex items-center px-1 self-center"
-                                >
-                                    <svg className="w-full h-full text-jvm-pc" viewBox="0 0 50 20" preserveAspectRatio="none">
-                                        <defs>
-                                            <marker id={`ah-${i}`} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                                                <polygon points="0 0, 8 3, 0 6" fill="currentColor" />
-                                            </marker>
-                                        </defs>
-                                        <line x1="0" y1="10" x2="48" y2="10" stroke="currentColor" strokeWidth="2" markerEnd={`url(#ah-${i})`} />
-                                    </svg>
-                                </motion.div>
-                            )}
-                            {isLast && (
-                                <motion.div
-                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                                    transition={{ delay: i * 0.05 + 0.1 }}
-                                    className="w-14 h-6 flex justify-start items-center ml-1 self-center"
-                                >
-                                    <svg className="w-8 h-full text-dark-muted" viewBox="0 0 40 20" preserveAspectRatio="none">
-                                        <line x1="0" y1="10" x2="35" y2="10" stroke="currentColor" strokeDasharray="4 2" strokeWidth="1.5" />
-                                        <line x1="30" y1="4" x2="30" y2="16" stroke="currentColor" strokeWidth="2" />
-                                        <line x1="35" y1="6" x2="35" y2="14" stroke="currentColor" strokeWidth="2" />
-                                    </svg>
-                                    <span className="text-xs font-mono text-dark-muted ml-1">null</span>
-                                </motion.div>
-                            )}
-                        </React.Fragment>
-                    )
-                })}
+                {chain.map((node, i) => (
+                    <LinkedListNode
+                        key={node.id}
+                        node={node}
+                        isFirst={i === 0}
+                        isLast={i === chain.length - 1}
+                        displayValue={displayValue}
+                    />
+                ))}
             </div>
         </div>
     )
@@ -950,7 +957,8 @@ function buildTreeLayout(
     node: HeapObject | undefined,
     allNodes: HeapObject[],
     depth: number,
-    visited: Set<string>
+    visited: Set<string>,
+    displayValue: (v: Value) => string
 ): TreeLayoutNode | null {
     if (!node || visited.has(node.id)) return null
     visited.add(node.id)
@@ -979,8 +987,8 @@ function buildTreeLayout(
         obj: node,
         x: 0, // computed later
         y: 0,
-        left: buildTreeLayout(leftChild, allNodes, depth + 1, visited),
-        right: buildTreeLayout(rightChild, allNodes, depth + 1, visited),
+        left: buildTreeLayout(leftChild, allNodes, depth + 1, visited, displayValue),
+        right: buildTreeLayout(rightChild, allNodes, depth + 1, visited, displayValue),
         depth,
         value,
     }
@@ -1043,11 +1051,11 @@ function collectNullEdges(node: TreeLayoutNode | null, result: NullEdge[]): void
     collectNullEdges(node.right, result)
 }
 
-function BinaryTreeVisualization({ root, allNodes }: { root: HeapObject; allNodes: HeapObject[] }) {
+function BinaryTreeVisualization({ root, allNodes, displayValue }: { root: HeapObject; allNodes: HeapObject[], displayValue: (v: Value) => string }) {
     const { jvmState } = useExecutionStore()
     const treeLayout = useMemo(() => {
         const visited = new Set<string>()
-        const tree = buildTreeLayout(root, allNodes, 0, visited)
+        const tree = buildTreeLayout(root, allNodes, 0, visited, displayValue)
         if (!tree) return null
 
         const depth = getTreeDepth(tree)
