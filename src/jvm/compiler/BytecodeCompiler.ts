@@ -1163,7 +1163,8 @@ export class BytecodeCompiler {
     }
 
     const elementType = AST.typeToString(expr.elementType)
-    ctx.instructions.push(createInstruction(OpCode.NEWARRAY, [typeOperand(elementType), intOperand(expr.dimensions.length)], expr.location.line))
+    const dimsCount = expr.initializer ? 1 : Math.max(1, expr.dimensions.length)
+    ctx.instructions.push(createInstruction(OpCode.NEWARRAY, [typeOperand(elementType), intOperand(dimsCount)], expr.location.line))
 
     if (expr.initializer) {
       for (let i = 0; i < expr.initializer.length; i++) {

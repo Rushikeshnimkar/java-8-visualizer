@@ -513,11 +513,35 @@ export class JVMSimulator {
 
       case OpCode.NEWARRAY: {
         const elementType = (instr.operands[0] as { type: 'type'; value: string }).value
-        const length = frame.operandStack.pop()
-        const len = length?.kind === 'primitive' ? (length.value as number) : 0
-        const arrayId = this.allocateArray(elementType, new Array(len).fill(this.getDefaultValue(elementType)))
+        const dimensionsCount = instr.operands.length > 1 ? (instr.operands[1] as { type: 'int'; value: number }).value : 1
+        
+        const dims: number[] = []
+        for (let i = 0; i < dimensionsCount; i++) {
+          const length = frame.operandStack.pop()
+          const len = length?.kind === 'primitive' ? (length.value as number) : 0
+          dims.unshift(len) // stack has dims in order, popping gets last dim first
+        }
+
+        const allocateMultiDim = (currentDims: number[], depth: number, type: string): string => {
+          const len = currentDims[depth]
+          const isLast = depth === currentDims.length - 1
+          const elements = new Array(len)
+          
+          if (isLast) {
+            elements.fill(this.getDefaultValue(type))
+          } else {
+            for (let i = 0; i < len; i++) {
+              const childId = allocateMultiDim(currentDims, depth + 1, type)
+              elements[i] = createReferenceValue(childId)
+            }
+          }
+          
+          return this.allocateArray(isLast ? type : 'Object[]', elements)
+        }
+
+        const arrayId = allocateMultiDim(dims, 0, elementType)
         frame.operandStack.push(createReferenceValue(arrayId))
-        description = `New ${elementType}[${len}] -> @${arrayId}`
+        description = `New ${elementType}[${dims.join('][')}] -> @${arrayId}`
         frame.pc++
         break
       }
