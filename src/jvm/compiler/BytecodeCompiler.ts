@@ -94,13 +94,25 @@ export class BytecodeCompiler {
       }
     }
 
+    // Collect instance initializer blocks
+    const instanceInitBlocks: AST.BlockStatement[] = []
+    for (const member of node.members) {
+      if (member.kind === 'MethodDeclaration' && member.name === '<instance_init>') {
+        if (member.body) {
+          instanceInitBlocks.push(member.body)
+        }
+      }
+    }
+
     for (const member of node.members) {
       if (member.kind === 'FieldDeclaration') {
         fields.push(this.compileField(member))
       } else if (member.kind === 'MethodDeclaration') {
+        // Skip instance initializer blocks - they're compiled into constructors
+        if (member.name === '<instance_init>') continue
         methods.push(this.compileMethod(member, node.name, parentClass, instanceFields))
       } else if (member.kind === 'ConstructorDeclaration') {
-        methods.push(this.compileConstructor(member, node.name, parentClass, instanceFields))
+        methods.push(this.compileConstructor(member, node.name, parentClass, instanceFields, instanceInitBlocks))
       }
     }
 
@@ -243,7 +255,7 @@ export class BytecodeCompiler {
     }
   }
 
-  private compileConstructor(node: AST.ConstructorDeclaration, className: string, parentClass = '', instanceFields = new Set<string>()): CompiledMethod {
+  private compileConstructor(node: AST.ConstructorDeclaration, className: string, parentClass = '', instanceFields = new Set<string>(), instanceInitBlocks: AST.BlockStatement[] = []): CompiledMethod {
     const ctx = this.createContext(className, '<init>', parentClass, instanceFields)
     const signature = this.buildMethodSignature('<init>', node.parameters, { kind: 'TypeNode', name: 'void', isArray: false, arrayDimensions: 0, typeArguments: [], location: node.location })
 
@@ -260,6 +272,11 @@ export class BytecodeCompiler {
         index: ctx.nextLocalIndex++,
         type: AST.typeToString(param.type)
       })
+    }
+
+    // Compile instance initializer blocks first (in order)
+    for (const initBlock of instanceInitBlocks) {
+      this.compileBlock(initBlock, ctx)
     }
 
     // Compile constructor body
@@ -639,13 +656,26 @@ export class BytecodeCompiler {
     // If no case matched, jump to default (or end)
     ctx.instructions.push(createInstruction(OpCode.GOTO, [labelOperand(defaultLabel)], stmt.location.line))
 
-    // Phase 2: Emit case bodies with fall-through
+    // Phase 2: Emit case bodies with implicit breaks
     for (let i = 0; i < stmt.cases.length; i++) {
       this.resolveLabel(ctx, caseLabels[i])
       for (const bodyStmt of stmt.cases[i].body) {
         this.compileStatement(bodyStmt, ctx)
       }
-      // No implicit break — natural fall-through to next case body
+      // Add implicit break to prevent fall-through (Java-compliant behavior)
+      // unless this is the last case or ends with return/throw/break
+      if (i < stmt.cases.length - 1) {
+        const lastStmt = stmt.cases[i].body[stmt.cases[i].body.length - 1]
+        const hasImplicitReturn = !lastStmt || 
+          !(lastStmt.kind === 'ReturnStatement' || 
+            lastStmt.kind === 'ThrowStatement' || 
+            (lastStmt.kind === 'BlockStatement' && lastStmt.statements.length > 0 && 
+              (lastStmt.statements[lastStmt.statements.length - 1].kind === 'ReturnStatement' ||
+               lastStmt.statements[lastStmt.statements.length - 1].kind === 'BreakStatement')))
+        if (hasImplicitReturn) {
+          ctx.instructions.push(createInstruction(OpCode.GOTO, [labelOperand(endLabel)], stmt.location.line))
+        }
+      }
     }
 
     this.resolveLabel(ctx, endLabel)

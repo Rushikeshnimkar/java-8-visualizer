@@ -1,7 +1,7 @@
-import { Lexer } from './src/jvm/parser/Lexer'
-import { Parser as JavaParser } from './src/jvm/parser/JavaParser'
-import { BytecodeCompiler } from './src/jvm/compiler/BytecodeCompiler'
-import { JVMSimulator } from './src/jvm/runtime/JVMSimulator'
+import { Lexer } from './src/jvm/parser/Lexer.ts'
+import { Parser as JavaParser } from './src/jvm/parser/JavaParser.ts'
+import { BytecodeCompiler } from './src/jvm/compiler/BytecodeCompiler.ts'
+import { JVMSimulator } from './src/jvm/runtime/JVMSimulator.ts'
 
 const code = `
 public class KnapsackDP {

@@ -18,6 +18,9 @@ import { DisclaimerModal } from './DisclaimerModal'
 import { Notepad } from './Notepad'
 import { useExecutionStore } from '../../state/executionStore'
 import { formatJavaCode } from '../../utils/javaFormatter'
+import { AlgorithmAnnotations } from '../Visualizations/AlgorithmAnnotations'
+import { ExecutionTimeline } from '../Visualizations/ExecutionTimeline'
+import { PerformanceProfiler } from '../Visualizations/PerformanceProfiler'
 
 type VisualizationTab = 'data-structures' | 'stack' | 'heap' | 'variables' | 'history' | 'threads' | 'inheritance'
 type BottomTab = 'output' | 'method-area' | 'pc'
@@ -30,6 +33,7 @@ export function MainLayout() {
   const [formatDone, setFormatDone] = useState(false)
   const [isNotepadOpen, setIsNotepadOpen] = useState(false)
   const [snippetsEnabled, setSnippetsEnabled] = useState(true)
+  const [showAdvancedFeatures, setShowAdvancedFeatures] = useState(false)
   const sharedEditorRef = useRef<any>(null)
   const { compilationError, jvmState, sourceCode, setSourceCode, autoSaveTime } = useExecutionStore()
 
@@ -134,6 +138,23 @@ export function MainLayout() {
           </div>
         </div>
         <div className="flex-1" />
+        <button
+          onClick={() => setShowAdvancedFeatures(!showAdvancedFeatures)}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            showAdvancedFeatures
+              ? 'bg-jvm-pc/20 text-jvm-pc border border-jvm-pc/50'
+              : 'bg-dark-bg text-dark-muted border border-dark-border hover:text-dark-text'
+          }`}
+          title="Toggle advanced analysis tools (Algorithm annotations, timeline, profiler)"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+          <span>Analysis</span>
+          {showAdvancedFeatures && (
+            <span className="w-1.5 h-1.5 rounded-full bg-jvm-pc animate-pulse" />
+          )}
+        </button>
         <ControlPanel />
       </header>
 
@@ -324,6 +345,42 @@ export function MainLayout() {
           >
             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1 group-hover:bg-dark-accent/20 transition-colors" />
           </div>
+
+          {/* Advanced Features Panel - Algorithm Annotations, Timeline, Profiler */}
+          {showAdvancedFeatures && (
+            <div className="flex-shrink-0 flex flex-col bg-dark-card border-b border-dark-border overflow-hidden">
+              {/* Toggle button and header */}
+              <div className="flex items-center justify-between px-4 py-2 bg-gradient-to-r from-jvm-pc/10 to-jvm-stack/10 border-b border-dark-border">
+                <div className="flex items-center gap-3">
+                  <svg className="w-4 h-4 text-jvm-pc" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  <h3 className="text-sm font-semibold text-dark-text">Advanced Analysis Tools</h3>
+                  <span className="text-xs text-dark-muted px-2 py-0.5 bg-dark-card rounded">
+                    Algorithm Insights • Execution History • Performance Metrics
+                  </span>
+                </div>
+                <button
+                  onClick={() => setShowAdvancedFeatures(false)}
+                  className="p-1 hover:bg-dark-border rounded transition-colors"
+                  title="Hide advanced features"
+                >
+                  <svg className="w-4 h-4 text-dark-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Algorithm Annotations */}
+              <AlgorithmAnnotations />
+
+              {/* Execution Timeline */}
+              <ExecutionTimeline />
+
+              {/* Performance Profiler */}
+              <PerformanceProfiler />
+            </div>
+          )}
 
           {/* Bottom Panel */}
           <div

@@ -123,49 +123,93 @@ export class JVMSimulator {
       const mainMethodSignature = `${this.program.mainClass}.main(String[])void`
       const startIndex = this.program.methodOffsets.get(mainMethodSignature) || 0
 
-      // Create args array on heap
-      const argsArrayId = this.allocateArray('String', [])
+      // Check if there's a <clinit> static initializer to run first
+      const mainClass = this.program.classes.find(c => c.name === this.program.mainClass)
+      const clinitMethod = mainClass?.methods.find(m => m.methodName === '<clinit>')
+      
+      if (clinitMethod && clinitMethod.instructions.length > 0) {
+        // Run static initializer first
+        const clinitOffset = this.program.methodOffsets.get(`${this.program.mainClass}.${clinitMethod.signature}`) || 0
+        const clinitFrame: StackFrame = {
+          id: this.generateFrameId(),
+          className: this.program.mainClass,
+          methodName: '<clinit>',
+          methodSignature: clinitMethod.signature,
+          localVariables: [],
+          operandStack: [],
+          pc: clinitOffset,
+          lineNumber: 1,
+          isNative: false,
+        }
+        
+        const mainThread: import('../types/JVMState').ThreadState = {
+          id: 'thread_main',
+          name: 'main',
+          stack: [clinitFrame],
+          status: 'RUNNABLE',
+          holdingMonitors: [],
+          priority: 5,
+          isDaemon: false,
+          stepCount: 0,
+          interrupted: false,
+        }
+        this.state.threads = [mainThread]
+        this.state.activeThread = 0
+        this.state.stack = mainThread.stack
+        
+        this.state.pc = {
+          currentInstruction: clinitOffset,
+          currentLine: 1,
+          currentMethod: '<clinit>',
+          currentClass: this.program.mainClass,
+        }
+        this.state.status = 'paused'
+      } else {
+        // No static initializer - go straight to main
+        // Create args array on heap
+        const argsArrayId = this.allocateArray('String', [])
 
-      const mainFrame: StackFrame = {
-        id: this.generateFrameId(),
-        className: this.program.mainClass,
-        methodName: 'main',
-        methodSignature: 'main(String[])void',
-        localVariables: [{
-          name: 'args',
-          type: 'String[]',
-          value: createReferenceValue(argsArrayId),
-          slot: 0,
-        }],
-        operandStack: [],
-        pc: startIndex,
-        lineNumber: 1,
-        isNative: false,
-      }
+        const mainFrame: StackFrame = {
+          id: this.generateFrameId(),
+          className: this.program.mainClass,
+          methodName: 'main',
+          methodSignature: 'main(String[])void',
+          localVariables: [{
+            name: 'args',
+            type: 'String[]',
+            value: createReferenceValue(argsArrayId),
+            slot: 0,
+          }],
+          operandStack: [],
+          pc: startIndex,
+          lineNumber: 1,
+          isNative: false,
+        }
 
-      // Create main thread with its own stack
-      const mainThread: import('../types/JVMState').ThreadState = {
-        id: 'thread_main',
-        name: 'main',
-        stack: [mainFrame],
-        status: 'RUNNABLE',
-        holdingMonitors: [],
-        priority: 5,
-        isDaemon: false,
-        stepCount: 0,
-        interrupted: false,
-      }
-      this.state.threads = [mainThread]
-      this.state.activeThread = 0
-      this.state.stack = mainThread.stack // alias for legacy consumers
+        // Create main thread with its own stack
+        const mainThread: import('../types/JVMState').ThreadState = {
+          id: 'thread_main',
+          name: 'main',
+          stack: [mainFrame],
+          status: 'RUNNABLE',
+          holdingMonitors: [],
+          priority: 5,
+          isDaemon: false,
+          stepCount: 0,
+          interrupted: false,
+        }
+        this.state.threads = [mainThread]
+        this.state.activeThread = 0
+        this.state.stack = mainThread.stack // alias for legacy consumers
 
-      this.state.pc = {
-        currentInstruction: startIndex,
-        currentLine: 1,
-        currentMethod: 'main',
-        currentClass: this.program.mainClass,
+        this.state.pc = {
+          currentInstruction: startIndex,
+          currentLine: 1,
+          currentMethod: 'main',
+          currentClass: this.program.mainClass,
+        }
+        this.state.status = 'paused'
       }
-      this.state.status = 'paused'
     }
   }
 
@@ -535,8 +579,8 @@ export class JVMSimulator {
               elements[i] = createReferenceValue(childId)
             }
           }
-          
-          return this.allocateArray(isLast ? type : 'Object[]', elements)
+          const arrayType = isLast ? type : type + '[]'.repeat(currentDims.length - 1 - depth)
+          return this.allocateArray(arrayType, elements)
         }
 
         const arrayId = allocateMultiDim(dims, 0, elementType)
@@ -568,6 +612,10 @@ export class JVMSimulator {
           const obj = this.state.heap.find(o => o.id === arrayRef.objectId)
           if (obj?.arrayElements) {
             const idx = index.value as number
+            // Bounds checking
+            if (idx < 0 || idx >= obj.arrayElements.length) {
+              throw new Error(`ArrayIndexOutOfBoundsException: ${idx} (length: ${obj.arrayElements.length})`)
+            }
             const value = obj.arrayElements[idx] || createNullValue()
             frame.operandStack.push(value)
             description = `Load array[${idx}] = ${valueToString(value)}`
@@ -585,6 +633,10 @@ export class JVMSimulator {
           const obj = this.state.heap.find(o => o.id === arrayRef.objectId)
           if (obj?.arrayElements) {
             const idx = index.value as number
+            // Bounds checking and type checking
+            if (idx < 0 || idx >= obj.arrayElements.length) {
+              throw new Error(`ArrayIndexOutOfBoundsException: ${idx} (length: ${obj.arrayElements.length})`)
+            }
             obj.arrayElements[idx] = value
             description = `Store array[${idx}] = ${valueToString(value)}`
           }
@@ -712,6 +764,12 @@ export class JVMSimulator {
       case OpCode.MOD: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         // String concatenation
         if (instr.opcode === OpCode.ADD && (
           (a?.kind === 'primitive' && a.type === 'string') ||
@@ -719,11 +777,16 @@ export class JVMSimulator {
         )) {
           const resolveToStr = (v: typeof a): string => {
             if (!v) return 'null'
-            if (v.kind === 'primitive') return String(v.value ?? 'null')
+            if (v.kind === 'primitive') {
+              if (v.value === null) return 'null'
+              if (v.type === 'char') return String(v.value)
+              return String(v.value ?? 'null')
+            }
             if (v.kind === 'reference' && v.objectId) {
               const ho = this.state.heap.find(o => o.id === v.objectId)
               if (ho) {
                 const cn = ho.className
+                // Handle common collection types
                 if (cn === 'HashSet' || cn === 'LinkedHashSet' || cn === 'TreeSet' || cn === 'Set' ||
                   cn === 'ArrayList' || cn === 'LinkedList' || cn === 'Stack' || cn === 'Vector' || cn === 'List' || cn === 'ArrayDeque') {
                   return '[' + (ho.arrayElements || []).map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
@@ -732,14 +795,20 @@ export class JVMSimulator {
                   const pairs = ho.fields.map(f => `${f.name}=${f.value.kind === 'primitive' ? String(f.value.value) : 'null'}`)
                   return '{' + pairs.join(', ') + '}'
                 }
+                // For other objects, try to call toString() if available
+                // For now, use className@objectId format (Java default toString())
                 return `${cn}@${v.objectId}`
               }
               return 'null'
             }
             if (v.kind === 'array' && v.objectId) {
               const ao = this.state.heap.find(o => o.id === v.objectId)
-              if (ao?.arrayElements) return '[' + ao.arrayElements.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
+              if (ao?.arrayElements) {
+                // Arrays also get special toString treatment
+                return '[' + ao.arrayElements.map(e => e.kind === 'primitive' ? String(e.value) : 'null').join(', ') + ']'
+              }
             }
+            // Fallback to valueToString for other cases
             return valueToString(v)
           }
           const aStr = resolveToStr(a)
@@ -758,10 +827,18 @@ export class JVMSimulator {
             case OpCode.SUB: result = av - bv; break
             case OpCode.MUL: result = av * bv; break
             case OpCode.DIV:
-              result = bv !== 0 ? av / bv : 0;
+              if (bv === 0) {
+                throw new Error('ArithmeticException: Division by zero')
+              }
+              result = av / bv;
               if (a.type === 'int' && b.type === 'int') result = Math.trunc(result);
               break
-            case OpCode.MOD: result = bv !== 0 ? av % bv : 0; break
+            case OpCode.MOD:
+              if (bv === 0) {
+                throw new Error('ArithmeticException: Modulo by zero')
+              }
+              result = bv !== 0 ? av % bv : 0; 
+              break
             default: result = 0
           }
           frame.operandStack.push(createPrimitiveValue(a.type, result))
@@ -777,6 +854,12 @@ export class JVMSimulator {
 
       case OpCode.NEG: {
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         if (a?.kind === 'primitive') {
           frame.operandStack.push(createPrimitiveValue(a.type, -(a.value as number)))
           description = `Negate ${a.value}`
@@ -793,6 +876,12 @@ export class JVMSimulator {
       case OpCode.CMP_GE: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         let result = false
         if (a?.kind === 'primitive' && b?.kind === 'primitive') {
           const av = a.value as number
@@ -820,6 +909,12 @@ export class JVMSimulator {
       case OpCode.AND: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         const result = (a?.kind === 'primitive' && a.value) && (b?.kind === 'primitive' && b.value)
         frame.operandStack.push(createPrimitiveValue('boolean', !!result))
         description = `AND: ${!!result}`
@@ -830,6 +925,12 @@ export class JVMSimulator {
       case OpCode.OR: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         const result = (a?.kind === 'primitive' && a.value) || (b?.kind === 'primitive' && b.value)
         frame.operandStack.push(createPrimitiveValue('boolean', !!result))
         description = `OR: ${!!result}`
@@ -839,6 +940,12 @@ export class JVMSimulator {
 
       case OpCode.NOT: {
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         const result = !(a?.kind === 'primitive' && a.value)
         frame.operandStack.push(createPrimitiveValue('boolean', result))
         description = `NOT: ${result}`
@@ -849,6 +956,12 @@ export class JVMSimulator {
       case OpCode.BIT_AND: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         if (a?.kind === 'primitive' && b?.kind === 'primitive') {
           const result = (a.value as number) & (b.value as number)
           frame.operandStack.push(createPrimitiveValue('int', result))
@@ -861,6 +974,12 @@ export class JVMSimulator {
       case OpCode.BIT_OR: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         if (a?.kind === 'primitive' && b?.kind === 'primitive') {
           const result = (a.value as number) | (b.value as number)
           frame.operandStack.push(createPrimitiveValue('int', result))
@@ -873,6 +992,12 @@ export class JVMSimulator {
       case OpCode.BIT_XOR: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         if (a?.kind === 'primitive' && b?.kind === 'primitive') {
           const result = (a.value as number) ^ (b.value as number)
           frame.operandStack.push(createPrimitiveValue('int', result))
@@ -885,6 +1010,12 @@ export class JVMSimulator {
       case OpCode.SHL: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         if (a?.kind === 'primitive' && b?.kind === 'primitive') {
           const result = (a.value as number) << (b.value as number)
           frame.operandStack.push(createPrimitiveValue('int', result))
@@ -897,6 +1028,12 @@ export class JVMSimulator {
       case OpCode.SHR: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         if (a?.kind === 'primitive' && b?.kind === 'primitive') {
           const result = (a.value as number) >> (b.value as number)
           frame.operandStack.push(createPrimitiveValue('int', result))
@@ -909,6 +1046,12 @@ export class JVMSimulator {
       case OpCode.USHR: {
         const b = frame.operandStack.pop()
         const a = frame.operandStack.pop()
+        
+        // Stack underflow check
+        if (!a || !b) {
+          throw new Error(`StackUnderflowError: Not enough operands for ${instr.opcode}`)
+        }
+        
         if (a?.kind === 'primitive' && b?.kind === 'primitive') {
           const result = (a.value as number) >>> (b.value as number)
           frame.operandStack.push(createPrimitiveValue('int', result))
@@ -964,6 +1107,45 @@ export class JVMSimulator {
       }
 
       case OpCode.RETURN:
+        // Check if this is <clinit> finishing - need to push main frame
+        if (frame.methodName === '<clinit>') {
+          this.state.stack.pop() // Pop clinit frame
+          
+          // Now push main frame
+          const mainMethodSignature = `${frame.className}.main(String[])void`
+          const startIndex = this.program.methodOffsets.get(mainMethodSignature) || 0
+          
+          // Create args array on heap
+          const argsArrayId = this.allocateArray('String', [])
+          
+          const mainFrame: StackFrame = {
+            id: this.generateFrameId(),
+            className: frame.className,
+            methodName: 'main',
+            methodSignature: 'main(String[])void',
+            localVariables: [{
+              name: 'args',
+              type: 'String[]',
+              value: createReferenceValue(argsArrayId),
+              slot: 0,
+            }],
+            operandStack: [],
+            pc: startIndex,
+            lineNumber: 1,
+            isNative: false,
+          }
+          
+          const thread = this.activeThreadState()
+          if (thread) {
+            thread.stack.push(mainFrame)
+          } else {
+            this.state.stack.push(mainFrame)
+          }
+          
+          description = 'Static initializer completed, entering main'
+          break
+        }
+        
         this.state.stack.pop()
         description = 'Return void'
         break

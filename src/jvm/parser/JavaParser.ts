@@ -174,6 +174,50 @@ export class Parser {
   private parseClassMembers(className: string): AST.ClassMember[] {
     const members: AST.ClassMember[] = []
     while (!this.check(TokenType.RBRACE) && !this.isAtEnd()) {
+      // Check for static or instance initializer block
+      if (this.check(TokenType.STATIC)) {
+        const savedPos = this.pos
+        const location = this.currentLocation()
+        this.advance() // consume 'static'
+        
+        if (this.check(TokenType.LBRACE)) {
+          // This is an initializer block
+          const block = this.parseBlock()
+          // Create a synthetic method-like structure for the initializer
+          // Static initializer - will be compiled to <clinit>
+          members.push({
+            kind: 'MethodDeclaration',
+            name: '<clinit>',
+            modifiers: ['static'],
+            returnType: { kind: 'TypeNode', name: 'void', isArray: false, arrayDimensions: 0, typeArguments: [], location },
+            parameters: [],
+            body: block,
+            throws: [],
+            location,
+          } as AST.MethodDeclaration)
+          continue
+        } else {
+          // Not an initializer block - backtrack and parse as normal member
+          this.pos = savedPos
+        }
+      } else if (this.check(TokenType.LBRACE)) {
+        // Instance initializer block (no 'static' keyword)
+        const location = this.currentLocation()
+        const block = this.parseBlock()
+        // Instance initializer - code will be copied to constructors
+        members.push({
+          kind: 'MethodDeclaration',
+          name: '<instance_init>',
+          modifiers: [],
+          returnType: { kind: 'TypeNode', name: 'void', isArray: false, arrayDimensions: 0, typeArguments: [], location },
+          parameters: [],
+          body: block,
+          throws: [],
+          location,
+        } as AST.MethodDeclaration)
+        continue
+      }
+      
       members.push(this.parseClassMember(className))
     }
     return members

@@ -10,6 +10,17 @@ import { parse } from '../jvm/parser'
 import { compile } from '../jvm/compiler'
 import { JVMSimulator, ExecutionResult } from '../jvm/runtime'
 
+export interface ExecutionHistoryEntry {
+  stepNumber: number
+  timestamp: number
+  instruction: Instruction
+  methodName: string
+  className: string
+  state: JVMState
+  changedVariables: string[]
+  startTime?: number
+}
+
 export interface ExecutionStore {
   // Source code
   sourceCode: string
@@ -30,6 +41,12 @@ export interface ExecutionStore {
   isRunning: boolean
   executionSpeed: number // ms between steps
   setExecutionSpeed: (speed: number) => void
+  
+  // Execution history
+  executionHistory: ExecutionHistoryEntry[]
+  startTime: number | null
+  totalExecutionTime: number
+  goToStep: (stepIndex: number) => void
 
   // Scanner input
   waitingForInput: boolean
@@ -79,6 +96,9 @@ export const useExecutionStore = create<ExecutionStore>()(
       highlightedLine: 0,
       waitingForInput: false,
       inputPromptMessage: '',
+      executionHistory: [],
+      startTime: null,
+      totalExecutionTime: 0,
 
       setSourceCode: (code) => {
         set({ sourceCode: code, compilationError: null, autoSaveTime: Date.now() })
@@ -86,6 +106,22 @@ export const useExecutionStore = create<ExecutionStore>()(
 
       setExecutionSpeed: (speed) => {
         set({ executionSpeed: speed })
+      },
+
+      goToStep: (stepIndex: number) => {
+        const { executionHistory } = get()
+        if (stepIndex < 0 || stepIndex >= executionHistory.length) return
+        
+        // Restore state from history entry
+        const entry = executionHistory[stepIndex]
+        
+        set({
+          jvmState: entry.state,
+          currentInstruction: entry.instruction,
+          executionDescription: `Jumped to step ${stepIndex}`,
+          highlightedLine: entry.state.pc.currentLine,
+          totalExecutionTime: Date.now() - (entry.startTime || 0),
+        })
       },
 
       compile: () => {
@@ -106,6 +142,9 @@ export const useExecutionStore = create<ExecutionStore>()(
             highlightedLine: state.pc.currentLine,
             waitingForInput: false,
             inputPromptMessage: '',
+            executionHistory: [],
+            startTime: Date.now(),
+            totalExecutionTime: 0,
           })
           return true
         } catch (error) {
@@ -119,22 +158,18 @@ export const useExecutionStore = create<ExecutionStore>()(
       },
 
       step: () => {
-        const { simulator, waitingForInput } = get()
+        const { simulator, waitingForInput, startTime } = get()
         if (!simulator || waitingForInput) return null
 
         const result = simulator.step()
-
-        // Check if simulator needs input after this step
-        if (simulator.getNeedsInput()) {
-          set({
-            jvmState: result.state,
-            currentInstruction: result.instruction,
-            executionDescription: result.description,
-            highlightedLine: result.state.pc.currentLine,
-            waitingForInput: true,
-            inputPromptMessage: simulator.getInputPrompt(),
+        
+        // Track changed variables (simple heuristic)
+        const changedVariables: string[] = []
+        const currentFrame = result.state.stack[result.state.stack.length - 1]
+        if (currentFrame) {
+          currentFrame.localVariables.forEach(lv => {
+            if (lv.value) changedVariables.push(lv.name)
           })
-          return result
         }
 
         set({
@@ -142,7 +177,21 @@ export const useExecutionStore = create<ExecutionStore>()(
           currentInstruction: result.instruction,
           executionDescription: result.description,
           highlightedLine: result.state.pc.currentLine,
+          executionHistory: result.instruction ? [
+            ...get().executionHistory,
+            {
+              stepNumber: result.state.stepNumber,
+              timestamp: Date.now(),
+              instruction: result.instruction,
+              methodName: result.state.pc.currentMethod || 'unknown',
+              className: result.state.pc.currentClass || 'unknown',
+              state: result.state,
+              changedVariables,
+              startTime: startTime || undefined,
+            }
+          ] : get().executionHistory,
         })
+        
         return result
       },
 
@@ -190,6 +239,9 @@ export const useExecutionStore = create<ExecutionStore>()(
             highlightedLine: state.pc.currentLine,
             waitingForInput: false,
             inputPromptMessage: '',
+            executionHistory: [],
+            startTime: Date.now(),
+            totalExecutionTime: 0,
           })
         } else if (compiledProgram) {
           get().compile()

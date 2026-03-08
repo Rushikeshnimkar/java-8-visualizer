@@ -6,6 +6,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useExecutionStore } from '../../state/executionStore'
 import { HeapObject, valueToString, ReferenceValue, Value } from '../../jvm/types/JVMState'
+import { AlgorithmRegistry } from './algorithms/index'
 
 // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -45,8 +46,15 @@ export interface ArrayPointer {
 }
 
 export function DataStructuresView() {
-    const { jvmState } = useExecutionStore()
+    const { jvmState, compiledProgram } = useExecutionStore()
     const { heap } = jvmState
+    const [activeAlgorithmId, setActiveAlgorithmId] = useState<string | null>(null)
+
+    // Detect if current class matches any registered algorithm visualizers
+    const matchedAlgorithm = useMemo(() => {
+        if (!jvmState.pc.currentClass && !compiledProgram) return null
+        return AlgorithmRegistry.findMatch(jvmState, compiledProgram || undefined) || null
+    }, [jvmState, compiledProgram])
 
     const displayValue = React.useCallback((v: Value): string => {
         if (!v) return 'undefined'
@@ -60,7 +68,9 @@ export function DataStructuresView() {
         if (v.kind === 'reference' && v.objectId) {
             const obj = heap.find(o => o.id === v.objectId)
             if (obj && obj.type === 'array') {
-                return `[${(obj.arrayElements || []).map(e => {
+                const arr = obj.arrayElements || []
+                const maxDisplay = 6
+                const displayElems = arr.slice(0, maxDisplay).map(e => {
                     if (e && e.kind === 'reference' && e.objectId) {
                         const nested = heap.find(no => no.id === e.objectId)
                         if (nested && nested.type === 'array') {
@@ -68,7 +78,11 @@ export function DataStructuresView() {
                         }
                     }
                     return e && e.kind === 'primitive' ? String(e.value) : (e ? `@${e.objectId}` : 'null')
-                }).join(', ')}]`
+                })
+                if (arr.length > maxDisplay) {
+                    displayElems.push('...')
+                }
+                return `[${displayElems.join(', ')}]`
             }
             return `@${v.objectId}`
         }
@@ -122,12 +136,26 @@ export function DataStructuresView() {
                 o.className === 'PriorityQueue')
         ), [heap])
 
-    const arrays = useMemo(() =>
-        heap.filter(o =>
+    const arrays = useMemo(() => {
+        const allArrays = heap.filter(o =>
             o.type === 'array' &&
             !o.className.toLowerCase().includes('string') &&
             !o.className.includes('$')
-        ), [heap])
+        )
+        // Find all object IDs that are elements of another array
+        const childArrayIds = new Set<string>()
+        allArrays.forEach(a => {
+            if (a.arrayElements) {
+                a.arrayElements.forEach(e => {
+                    if (e && e.kind === 'reference' && e.objectId) {
+                        childArrayIds.add(e.objectId)
+                    }
+                })
+            }
+        })
+        // Return only top-level arrays
+        return allArrays.filter(a => !childArrayIds.has(a.id))
+    }, [heap])
 
     // ── Binary Tree detection ──
     const binaryTrees = useMemo(() => {
@@ -223,6 +251,34 @@ export function DataStructuresView() {
     return (
         <div className="h-full overflow-y-auto p-4 space-y-10 bg-dark-bg jvm-scrollbar">
 
+            {/* ── Algorithm Visualizer Banner ── */}
+            {matchedAlgorithm && (
+                <div className="mb-6">
+                    {!activeAlgorithmId ? (
+                        <button 
+                            onClick={() => setActiveAlgorithmId(matchedAlgorithm.id)}
+                            className="w-full flex items-center justify-between bg-gradient-to-r from-indigo-900/40 to-cyan-900/40 border border-indigo-500/30 hover:border-indigo-400/60 rounded-xl p-4 transition-all duration-300 group shadow-lg shadow-indigo-500/5 text-left"
+                        >
+                            <div>
+                                <h3 className="text-lg font-bold text-indigo-300 flex items-center gap-2">
+                                    <span className="text-xl group-hover:scale-110 transition-transform">{matchedAlgorithm.icon}</span> 
+                                    Visualize {matchedAlgorithm.title}
+                                </h3>
+                                <p className="text-sm text-indigo-200/60 mt-1">{matchedAlgorithm.description}</p>
+                            </div>
+                            <div className="bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold opacity-80 group-hover:opacity-100 transition-opacity">
+                                Launch
+                            </div>
+                        </button>
+                    ) : (
+                        <matchedAlgorithm.component 
+                            jvmState={jvmState} 
+                            onClose={() => setActiveAlgorithmId(null)} 
+                        />
+                    )}
+                </div>
+            )}
+
             {/* ── HashMaps ── */}
             {hashMaps.length > 0 && (
                 <Section title="HashMap" color="text-purple-400" borderColor="border-purple-400/30"
@@ -265,6 +321,10 @@ export function DataStructuresView() {
                                 })
                                 colorIdx++
                             }
+                        }
+                        // Detect 2D array by className or structure
+                        if (a.className.includes('[][]') || (elems.length > 0 && elems[0]?.kind === 'reference' && heap.find(o => o.id === (elems[0] as ReferenceValue).objectId)?.type === 'array')) {
+                            return <Grid2DVisualization key={a.id} array={a} pointers={pointers} displayValue={displayValue} />
                         }
                         return <ArrayVisualization key={a.id} array={a} pointers={pointers} displayValue={displayValue} />
                     })}
@@ -863,7 +923,7 @@ function ArrayVisualization({ array, pointers = [], displayValue }: { array: Hea
                                     <div className="text-[10px] text-dark-muted mb-1 font-mono">{i}</div>
                                     {/* Cell — highlight border if pointed to */}
                                     <div
-                                        className={`w-14 h-14 flex items-center justify-center bg-dark-bg rounded-md text-sm font-mono shadow-inner overflow-hidden relative group transition-all duration-200 ${hasPointer
+                                        className={`min-w-[56px] w-auto h-14 px-2 flex items-center justify-center bg-dark-bg rounded-md text-sm font-mono shadow-inner overflow-hidden relative group transition-all duration-200 ${hasPointer
                                             ? `border-2 ${topPointerColor!.border} shadow-lg`
                                             : 'border-2 border-jvm-method/50'
                                             }`}
@@ -871,7 +931,7 @@ function ArrayVisualization({ array, pointers = [], displayValue }: { array: Hea
                                     >
                                         <div className={`absolute inset-0 transition-colors ${hasPointer ? 'bg-white/5' : 'bg-jvm-method/5 group-hover:bg-jvm-method/10'
                                             }`} />
-                                        <span className="truncate px-1 z-10 w-full text-center" title={displayValue(elem)}>
+                                        <span className="whitespace-nowrap z-10 text-center" title={displayValue(elem)}>
                                             {displayValue(elem)}
                                         </span>
                                     </div>
@@ -911,6 +971,92 @@ function ArrayVisualization({ array, pointers = [], displayValue }: { array: Hea
                         <div className="text-sm text-dark-muted italic py-4">Empty array</div>
                     )}
                 </div>
+            </div>
+        </div>
+    )
+}
+
+// ─── 2D Grid Visualization ───────────────────────────────────────────────
+export function Grid2DVisualization({ array, pointers = [], displayValue }: { array: HeapObject; pointers?: ArrayPointer[], displayValue: (v: Value) => string }) {
+    const { jvmState } = useExecutionStore()
+    const { heap } = jvmState
+    const rows = array.arrayElements || []
+
+    const resolvedMatrix: { id: string; elements: Value[] }[] = rows.map(r => {
+        if (r && r.kind === 'reference' && r.objectId) {
+            const rowObj = heap.find(o => o.id === r.objectId)
+            if (rowObj && rowObj.type === 'array') {
+                return { id: rowObj.id, elements: rowObj.arrayElements || [] }
+            }
+        }
+        return { id: 'null', elements: [] }
+    })
+
+    const maxCols = Math.max(...resolvedMatrix.map(r => r.elements.length), 0)
+    const rowPointers = pointers.filter(p => p.value >= 0 && p.value < rows.length)
+
+    return (
+        <div className="bg-dark-card border border-dark-border rounded-lg p-4 overflow-hidden shadow-sm mt-3">
+            <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-jvm-method">@{array.id}</span>
+                    <span className="text-sm font-semibold">{array.className}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                    {rowPointers.length > 0 && (
+                        <div className="flex items-center gap-2">
+                            {rowPointers.map(p => (
+                                <span key={p.name} className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${p.color.text} bg-dark-bg border ${p.color.border}/30`}>
+                                    {p.name}={p.value}
+                                </span>
+                            ))}
+                        </div>
+                    )}
+                    <span className="text-xs text-dark-muted px-2 py-0.5 bg-dark-bg rounded border border-dark-border">
+                        size: {rows.length} × {maxCols}
+                    </span>
+                </div>
+            </div>
+            
+            <div className="overflow-auto max-h-[400px] hide-scrollbar relative rounded border border-dark-border/50">
+                <table className="border-collapse text-sm font-mono w-max">
+                    <thead className="sticky top-0 z-20">
+                        <tr>
+                            <th className="bg-dark-bg p-2 text-dark-muted text-[10px] border-b border-r border-dark-border min-w-[30px] shadow-sm"></th>
+                            {Array.from({ length: maxCols }).map((_, j) => (
+                                <th key={j} className="bg-dark-bg p-2 text-dark-muted text-[10px] border-b border-dark-border min-w-[40px] shadow-sm text-center">
+                                    {j}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {resolvedMatrix.map((row, i) => {
+                            const ptr = rowPointers.find(p => p.value === i)
+                            return (
+                                <tr key={i} className={`group transition-colors ${ptr ? 'bg-white/5' : 'hover:bg-white/[0.02]'}`}>
+                                    <td className="sticky left-0 bg-dark-card group-hover:bg-dark-bg p-2 text-dark-muted text-[10px] z-10 border-r border-dark-border text-center font-bold">
+                                        <div className="flex flex-col items-center">
+                                            <span>{i}</span>
+                                            {ptr && <span className={`text-[8px] ${ptr.color.text} mt-1`}>{ptr.name}</span>}
+                                        </div>
+                                    </td>
+                                    {row.elements.map((elem, j) => (
+                                        <td key={j} className="p-2 border border-dark-border/50 text-center min-w-[40px] transition-colors hover:bg-jvm-method/20 relative">
+                                            <span title={displayValue(elem)}>{displayValue(elem)}</span>
+                                        </td>
+                                    ))}
+                                    {Array.from({ length: maxCols - row.elements.length }).map((_, j) => (
+                                        <td key={`empty-${j}`} className="p-2 border border-dark-border/50 bg-dark-bg/20"></td>
+                                    ))}
+                                </tr>
+                            )
+                        })}
+                    </tbody>
+                </table>
+                {resolvedMatrix.length === 0 && (
+                    <div className="text-sm text-dark-muted italic p-4 text-center">Empty matrix</div>
+                )}
             </div>
         </div>
     )
