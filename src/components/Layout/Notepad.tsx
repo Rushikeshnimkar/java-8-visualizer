@@ -38,6 +38,7 @@ export function Notepad({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
     const [notes, setNotes] = useState(loadNotes)
     const [checklist, setChecklist] = useState<ChecklistItem[]>(loadChecklist)
     const [newItemText, setNewItemText] = useState('')
+    const [isPinned, setIsPinned] = useState(false)
     const newItemRef = useRef<HTMLInputElement>(null)
     const popupRef = useRef<HTMLDivElement>(null)
 
@@ -53,7 +54,7 @@ export function Notepad({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
 
     // Close on outside click
     useEffect(() => {
-        if (!isOpen) return
+        if (!isOpen || isPinned) return
         const handler = (e: MouseEvent) => {
             if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
                 onClose()
@@ -65,7 +66,7 @@ export function Notepad({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
             clearTimeout(timer)
             document.removeEventListener('mousedown', handler)
         }
-    }, [isOpen, onClose])
+    }, [isOpen, onClose, isPinned])
 
     const addItem = useCallback(() => {
         const text = newItemText.trim()
@@ -152,11 +153,23 @@ export function Notepad({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
                                 )}
                             </button>
                         </div>
-                        <button onClick={onClose} className="notepad-close" title="Close notepad">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => setIsPinned(!isPinned)}
+                                className={`notepad-close ${isPinned ? '!text-[#58a6ff] !bg-[rgba(88,166,255,.15)] ring-1 ring-[rgba(88,166,255,.3)] ring-inset' : 'opacity-70 hover:opacity-100'}`}
+                                title={isPinned ? "Unpin notepad (currently pinned)" : "Pin notepad to keep it open"}
+                            >
+                                <svg className="w-4 h-4" fill={isPinned ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 17v5"/>
+                                    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+                                </svg>
+                            </button>
+                            <button onClick={onClose} className="notepad-close opacity-70 hover:opacity-100" title="Close notepad">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
 
                     {/* Body */}
