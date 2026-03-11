@@ -795,6 +795,13 @@ export class JVMSimulator {
                   const pairs = ho.fields.map(f => `${f.name}=${f.value.kind === 'primitive' ? String(f.value.value) : 'null'}`)
                   return '{' + pairs.join(', ') + '}'
                 }
+                // Handle String objects on heap
+                if (cn === 'String' || cn === 'java.lang.String') {
+                  const valF = ho.fields.find(f => f.name === '$value')
+                  if (valF && valF.value.kind === 'primitive') return String(valF.value.value)
+                  if (ho.stringValue !== undefined) return ho.stringValue
+                  return ''
+                }
                 // For other objects, try to call toString() if available
                 // For now, use className@objectId format (Java default toString())
                 return `${cn}@${v.objectId}`
@@ -1188,6 +1195,16 @@ export class JVMSimulator {
                   pairs.push(`${ks}=${vs}`)
                 }
                 outputStr = '{' + pairs.join(', ') + '}'
+              } else if (cn === 'String' || cn === 'java.lang.String') {
+                // String object on heap — read the stored string value
+                const valField = heapObj.fields.find(f => f.name === '$value')
+                if (valField && valField.value.kind === 'primitive') {
+                  outputStr = String(valField.value.value)
+                } else if (heapObj.stringValue !== undefined) {
+                  outputStr = heapObj.stringValue
+                } else {
+                  outputStr = ''
+                }
               } else if (heapObj.fields.length > 0) {
                 // StringBuilder / StringBuffer: read the internal $sb field
                 const sbField = heapObj.fields.find(f => f.name === '$sb')
@@ -1515,6 +1532,34 @@ export class JVMSimulator {
     const strVal = objRef?.kind === 'primitive' && objRef.type === 'string' ? String(objRef.value ?? '') : null
 
     if (className === 'String' || strVal !== null) {
+      // Handle String constructor: new String(char[])
+      if (methodName === '<init>' && obj && (obj.className === 'String' || obj.className === 'java.lang.String')) {
+        if (args.length === 1 && args[0].kind === 'reference' && args[0].objectId) {
+          // new String(char[]) — convert char array to string
+          const arrObj = this.state.heap.find(o => o.id === (args[0] as import('../types/JVMState').ReferenceValue).objectId)
+          if (arrObj && arrObj.arrayElements) {
+            const str = arrObj.arrayElements.map(e => e.kind === 'primitive' ? String(e.value) : '').join('')
+            obj.fields = obj.fields.filter(f => f.name !== '$value')
+            obj.fields.push({ name: '$value', type: 'String', value: createPrimitiveValue('string', str), isStatic: false })
+            obj.stringValue = str
+            return `new String(char[]) = "${str}"`
+          }
+        } else if (args.length === 1 && args[0].kind === 'primitive' && args[0].type === 'string') {
+          // new String(String)
+          const str = String(args[0].value)
+          obj.fields = obj.fields.filter(f => f.name !== '$value')
+          obj.fields.push({ name: '$value', type: 'String', value: createPrimitiveValue('string', str), isStatic: false })
+          obj.stringValue = str
+          return `new String("${str}")`
+        } else if (args.length === 0) {
+          // new String()
+          obj.fields = obj.fields.filter(f => f.name !== '$value')
+          obj.fields.push({ name: '$value', type: 'String', value: createPrimitiveValue('string', ''), isStatic: false })
+          obj.stringValue = ''
+          return `new String()`
+        }
+        return `String.<init>`
+      }
       const s = strVal ?? (obj?.stringValue ?? (obj?.fields.find(f => f.name === '$value')?.value.kind === 'primitive' ? String((obj!.fields.find(f => f.name === '$value')!.value as import('../types/JVMState').PrimitiveValue).value) : ''))
       const prim = (i: number) => args[i]?.kind === 'primitive' ? args[i] : null
       const num = (i: number) => prim(i) ? (prim(i)!.value as number) : 0
