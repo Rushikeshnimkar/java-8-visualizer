@@ -788,6 +788,35 @@ export class BytecodeCompiler {
   }
 
   private compileBinaryExpression(expr: AST.BinaryExpression, ctx: CompilerContext): void {
+    // Short-circuit evaluation for && and ||
+    if (expr.operator === '&&') {
+      // if left is false, skip right and push false
+      const falseLabel = ctx.labelCounter++
+      const endLabel = ctx.labelCounter++
+      this.compileExpression(expr.left, ctx)
+      ctx.instructions.push(createInstruction(OpCode.IF_FALSE, [labelOperand(falseLabel)], expr.location.line))
+      this.compileExpression(expr.right, ctx)
+      ctx.instructions.push(createInstruction(OpCode.GOTO, [labelOperand(endLabel)], expr.location.line))
+      this.resolveLabel(ctx, falseLabel)
+      ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'boolean', value: false }], expr.location.line))
+      this.resolveLabel(ctx, endLabel)
+      return
+    }
+
+    if (expr.operator === '||') {
+      // if left is true, skip right and push true
+      const trueLabel = ctx.labelCounter++
+      const endLabel = ctx.labelCounter++
+      this.compileExpression(expr.left, ctx)
+      ctx.instructions.push(createInstruction(OpCode.IF_TRUE, [labelOperand(trueLabel)], expr.location.line))
+      this.compileExpression(expr.right, ctx)
+      ctx.instructions.push(createInstruction(OpCode.GOTO, [labelOperand(endLabel)], expr.location.line))
+      this.resolveLabel(ctx, trueLabel)
+      ctx.instructions.push(createInstruction(OpCode.LOAD_CONST, [{ type: 'boolean', value: true }], expr.location.line))
+      this.resolveLabel(ctx, endLabel)
+      return
+    }
+
     this.compileExpression(expr.left, ctx)
     this.compileExpression(expr.right, ctx)
 
@@ -803,8 +832,6 @@ export class BytecodeCompiler {
       '<=': OpCode.CMP_LE,
       '>': OpCode.CMP_GT,
       '>=': OpCode.CMP_GE,
-      '&&': OpCode.AND,
-      '||': OpCode.OR,
       '&': OpCode.BIT_AND,
       '|': OpCode.BIT_OR,
       '^': OpCode.BIT_XOR,
