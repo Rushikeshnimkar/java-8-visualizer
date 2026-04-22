@@ -1,5 +1,6 @@
 import { AlgorithmRegistry } from './AlgorithmRegistry'
 import { TrappingRainWaterVisualization } from './TrappingRainWaterVisualization'
+import { JumpGameVisualization } from './JumpGameVisualization'
 
 // Pre-register algorithms
 AlgorithmRegistry.register({
@@ -36,6 +37,41 @@ AlgorithmRegistry.register({
         return hasArray && hasPointers && hasWater
     },
     component: TrappingRainWaterVisualization
+})
+
+AlgorithmRegistry.register({
+    id: 'jump-game',
+    title: 'Jump Game',
+    description: 'Determines if you can reach the last index by jumping through an array.',
+    icon: '🦘',
+    matchPatterns: ['JumpGame', 'CanJump'],
+    matchHeuristics: (jvmState, compiledProgram) => {
+        // Static analysis: scan compiled program for Jump Game variable patterns
+        if (compiledProgram) {
+            for (const cls of compiledProgram.classes) {
+                for (const method of cls.methods) {
+                    const varNames = method.localVariableTable.map(v => v.name)
+                    const hasArray = varNames.includes('nums') || varNames.includes('arr') || varNames.includes('jumps')
+                    const hasReach = varNames.includes('maxReach') || varNames.includes('farthest') ||
+                                    varNames.includes('reach') || varNames.includes('maxPos')
+                    
+                    if (hasArray && hasReach) return true
+                }
+            }
+        }
+
+        // Fallback to runtime frame checking
+        const activeFrame = jvmState.stack[jvmState.stack.length - 1]
+        if (!activeFrame) return false
+        
+        const varNames = activeFrame.localVariables.map(v => v.name)
+        const hasArray = varNames.includes('nums') || varNames.includes('arr') || varNames.includes('jumps')
+        const hasReach = varNames.includes('maxReach') || varNames.includes('farthest') ||
+                        varNames.includes('reach') || varNames.includes('maxPos')
+        
+        return hasArray && hasReach
+    },
+    component: JumpGameVisualization
 })
 
 export { AlgorithmRegistry }
